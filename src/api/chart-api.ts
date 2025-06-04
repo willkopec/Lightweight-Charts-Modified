@@ -445,4 +445,25 @@ public updateTrendline(id: string, x1?: number, y1?: number, x2?: number, y2?: n
     this._chartWidget.model().updateTrendline(id, undefined, options);
 }
 
+public addFibonacci(x1: number, y1: number, x2: number, y2: number, options?: any): string {
+    const id = 'fibonacci_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const data = {
+        id: id,
+        point1: { time: x1, value: y1 },
+        point2: { time: x2, value: y2 }
+    };
+    
+    return this._chartWidget.model().addFibonacci(data, options);
+}
+
+public removeFibonacci(id: string): void {
+    this._chartWidget.model().removeFibonacci(id);
+}
+
+public updateFibonacci(id: string, x1?: number, y1?: number, x2?: number, y2?: number, options?: any): void {
+    const point1 = (x1 !== undefined && y1 !== undefined) ? { time: x1, value: y1 } : undefined;
+    const point2 = (x2 !== undefined && y2 !== undefined) ? { time: x2, value: y2 } : undefined;
+    this._chartWidget.model().updateFibonacci(id, point1, point2, options);
+}
+
 }

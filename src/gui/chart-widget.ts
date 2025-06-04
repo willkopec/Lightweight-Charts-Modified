@@ -82,9 +82,12 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
 	private _toolbarWidget: ToolbarWidget | null = null;
 	private _isDrawingTrendline: boolean = false;
 	private _trendlineStartPoint: { x: number; y: number; time: number; price: number } | null = null;
+	private _trendlinePreviewEnd: { x: number; y: number; time: number; price: number } | null = null;
 	private _originalCrosshairMode: number | null = null;
 
-	private _disableCrosshairUpdates: boolean = false;
+	private _isDrawingFibonacci: boolean = false;
+	private _fibonacciStartPoint: { x: number; y: number; time: number; price: number } | null = null;
+
 	private readonly _horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>;
 
 	public constructor(container: HTMLElement, options: ChartOptionsInternal<HorzScaleItem>, horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>) {
@@ -141,7 +144,8 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
 		container.appendChild(this._element);
 		// Create and add toolbar with callbacks
 		const toolbarCallbacks: ToolbarCallbacks = {
-    		onTrendlineToolToggle: this._onTrendlineToolToggle.bind(this)
+    		onTrendlineToolToggle: this._onTrendlineToolToggle.bind(this),
+    		onFibonacciToolToggle: this._onFibonacciToolToggle.bind(this)
 		};
 		this._toolbarWidget = new ToolbarWidget(toolbarCallbacks);
 		this._element.appendChild(this._toolbarWidget.getElement());
@@ -346,20 +350,119 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
 	}
 
 	public setAndSaveCurrentPosition(x: Coordinate, y: Coordinate, event: TouchMouseEventData | null, pane: Pane, skipEvent?: boolean): void {
-    // If trendline drawing is active, don't update crosshair position (to avoid magnet effect)
-    if (this._disableCrosshairUpdates) {
-        console.log('Crosshair updates disabled during trendline drawing');
-        return;
+    console.log('setAndSaveCurrentPosition called:', {
+        x: x,
+        y: y,
+        isDrawing: this._isDrawingTrendline,
+        hasStartPoint: !!this._trendlineStartPoint,
+        startPoint: this._trendlineStartPoint
+    });
+    
+    // Update trendline preview if we're in drawing mode and have a start point
+    if (this._isDrawingTrendline && this._trendlineStartPoint) {
+        console.log('Updating trendline preview at:', x, y);
+        this._updateTrendlinePreview(x, y, pane);
     }
     
     // Normal crosshair position update
     this._model.setAndSaveCurrentPosition(x, y, event, pane, skipEvent);
 }
 
+private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void {
+    const priceScale = pane.defaultPriceScale();
+    const firstValue = priceScale.firstValue();
+    if (firstValue === null) {
+        return;
+    }
+    
+    const price = priceScale.coordinateToPrice(y, firstValue);
+    if (price === null) {
+        return;
+    }
+    
+    let timeValue: number;
+    
+    // Use the same time calculation logic as trendline creation
+    const timeScale = this._model.timeScale() as any;
+    const baseIndex = timeScale._internal_baseIndex();
+    const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
+    
+    if (baseCoord !== null && x > baseCoord) {
+        timeValue = this._extrapolateTimeFromCoordinate(x);
+    } else {
+        const index = timeScale.coordinateToIndex(x);
+        if (index !== null && index !== undefined) {
+            const timePoint = timeScale.indexToTimeScalePoint(index)?.originalTime;
+            timeValue = timePoint !== undefined ? (timePoint as number) : this._extrapolateTimeFromCoordinate(x);
+        } else {
+            timeValue = this._extrapolateTimeFromCoordinate(x);
+        }
+    }
+    
+    // Update the preview end point
+    this._trendlinePreviewEnd = {
+        x: x,
+        y: y,
+        time: timeValue,
+        price: price
+    };
+    
+    console.log('Updated trendline preview:', this._trendlinePreviewEnd);
+    
+    // Trigger a light update to redraw
+    this._model.lightUpdate();
+}
+
 	private _onTrendlineToolToggle(active: boolean): void {
     this._isDrawingTrendline = active;
     this._trendlineStartPoint = null;
+	this._trendlinePreviewEnd = null;
     console.log('Trendline drawing mode:', active ? 'ON' : 'OFF');
+    
+    if (active) {
+        this.setCursorStyle('crosshair');
+
+		// Enable crosshair center dot for drawing mode
+this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
+        
+        // Store original crosshair mode and switch to Normal mode (no snapping)
+        const currentOptions = this._model.options();
+        console.log('Current crosshair mode before change:', currentOptions.crosshair.mode);
+        this._originalCrosshairMode = currentOptions.crosshair.mode;
+        
+        this._model.applyOptions({
+            crosshair: {
+                mode: 0 // CrosshairMode.Normal - follows mouse freely
+            }
+        });
+        
+        // Verify the change was applied
+        const newOptions = this._model.options();
+        console.log('Crosshair mode after change:', newOptions.crosshair.mode);
+        
+    } else {
+        this.setCursorStyle(null);
+
+		// Disable crosshair center dot
+this._model.crosshairSource().setDrawingMode(false);
+        
+        // Restore original crosshair mode
+        if (this._originalCrosshairMode !== null) {
+            console.log('Restoring crosshair mode to:', this._originalCrosshairMode);
+            this._model.applyOptions({
+                crosshair: {
+                    mode: this._originalCrosshairMode
+                }
+            });
+            this._originalCrosshairMode = null;
+        }
+    }
+}
+
+private _onFibonacciToolToggle(active: boolean): void {
+    this._isDrawingFibonacci = active;
+    this._fibonacciStartPoint = null;
+    console.log('Fibonacci drawing mode:', active ? 'ON' : 'OFF');
     
     if (active) {
         this.setCursorStyle('crosshair');
@@ -694,6 +797,11 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
     			pane.updateTrendlines(trendlines);
 			});
 
+			const fibonacciRetracements = this._model.fibonacciRetracements();
+this._paneWidgets.forEach((pane: PaneWidget) => {
+    pane.updateFibonacciRetracements(fibonacciRetracements);
+});
+
 			// In the case a full invalidation has been postponed during the draw, reapply
 			// the timescale invalidations. A full invalidation would mean there is a change
 			// in the timescale width (caused by price scale changes) that needs to be drawn
@@ -914,19 +1022,27 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
     point: Point | null,
     event: TouchMouseEventData
 ): void {
-    console.log('Click detected - Drawing mode:', this._isDrawingTrendline, 'Time:', time, 'Point:', point);
-    
-    // Handle trendline drawing mode
-    if (this._isDrawingTrendline) {
-        if (point !== null) {
-            // Always allow clicks when in drawing mode, even if time is null
-            this._handleTrendlineClick(pane, time, point, event);
-        }
-        return;
+    console.log('Click detected - Trendline mode:', this._isDrawingTrendline, 'Fibonacci mode:', this._isDrawingFibonacci, 'Time:', time, 'Point:', point);
+
+// Handle trendline drawing mode
+if (this._isDrawingTrendline) {
+    if (point !== null) {
+        // Always allow clicks when in drawing mode, even if time is null
+        this._handleTrendlineClick(pane, time, point, event);
     }
-    
-    // Normal click handling
-    this._clicked.fire(() => this._getMouseEventParamsImpl(time, point, event, pane));
+    return;
+}
+
+// Handle fibonacci drawing mode
+if (this._isDrawingFibonacci) {
+    if (point !== null) {
+        this._handleFibonacciClick(pane, time, point, event);
+    }
+    return;
+}
+
+// Normal click handling
+this._clicked.fire(() => this._getMouseEventParamsImpl(time, point, event, pane));
 }
 
 private _handleTrendlineClick(
@@ -1021,8 +1137,114 @@ private _handleTrendlineClick(
         // Reset drawing mode
         this._isDrawingTrendline = false;
         this._trendlineStartPoint = null;
+        this._trendlinePreviewEnd = null;
         this.setCursorStyle(null);
+        // Disable crosshair center dot
+        this._model.crosshairSource().setDrawingMode(false);
         this._toolbarWidget?.deactivateTrendlineTool();
+    }
+}
+
+public getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null {
+    return this._trendlinePreviewEnd;
+}
+
+private _handleFibonacciClick(
+    pane: PaneWidget,
+    time: TimePointIndex | null,
+    point: Point | null,
+    event: TouchMouseEventData
+): void {
+    if (point === null) {
+        return;
+    }
+
+    const priceScale = pane.state().defaultPriceScale();
+    const firstValue = priceScale.firstValue();
+    if (firstValue === null) {
+        return;
+    }
+
+    const price = priceScale.coordinateToPrice(point.y, firstValue);
+    
+    let timeValue: number;
+    
+    // Check if this click is beyond the rightmost data
+    const timeScale = this._model.timeScale() as any;
+    const baseIndex = timeScale._internal_baseIndex();
+    const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
+    
+    console.log('Fibonacci click analysis:', {
+        clickX: point.x,
+        baseIndex,
+        baseCoord,
+        isBeyondData: point.x > (baseCoord || 0)
+    });
+    
+    if (baseCoord !== null && point.x > baseCoord) {
+        // Click is beyond the rightmost data point
+        console.log('Click detected beyond data range for Fibonacci');
+        timeValue = this._extrapolateTimeFromCoordinate(point.x);
+    } else if (time !== null) {
+        // Try to get time from the time index
+        const timePoint = this._model.timeScale().indexToTimeScalePoint(time)?.originalTime;
+        if (timePoint !== undefined) {
+            timeValue = timePoint as number;
+        } else {
+            // Index exists but no time data - extrapolate
+            console.log('Index exists but no time data, extrapolating for Fibonacci...');
+            timeValue = this._extrapolateTimeFromCoordinate(point.x);
+        }
+    } else {
+        // No time index at all - extrapolate
+        console.log('No time index, extrapolating for Fibonacci...');
+        timeValue = this._extrapolateTimeFromCoordinate(point.x);
+    }
+
+    if (price === null) {
+        return;
+    }
+
+    if (this._fibonacciStartPoint === null) {
+        // First click - store start point
+        this._fibonacciStartPoint = {
+            x: point.x,
+            y: point.y,
+            time: timeValue,
+            price: price
+        };
+        console.log('Fibonacci start point set:', this._fibonacciStartPoint);
+    } else {
+        // Second click - create fibonacci retracement
+        const endPoint = {
+            x: point.x,
+            y: point.y,
+            time: timeValue,
+            price: price
+        };
+        
+        console.log('Creating Fibonacci retracement from', this._fibonacciStartPoint, 'to', endPoint);
+        
+        // Create the fibonacci retracement with only time/price data
+const fibData = {
+    id: 'fibonacci_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+    point1: { 
+        time: this._fibonacciStartPoint.time, 
+        value: this._fibonacciStartPoint.price
+    },
+    point2: { 
+        time: endPoint.time, 
+        value: endPoint.price
+    }
+};
+console.log('Creating fibonacci with data:', fibData);
+this._model.addFibonacci(fibData);
+        
+        // Reset drawing mode
+        this._isDrawingFibonacci = false;
+        this._fibonacciStartPoint = null;
+        this.setCursorStyle(null);
+        this._toolbarWidget?.deactivateFibonacciTool();
     }
 }
 

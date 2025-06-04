@@ -10,21 +10,24 @@ export class CrosshairPaneView implements IPaneView {
 	private readonly _pane: Pane;
 	private readonly _source: Crosshair;
 	private readonly _rendererData: CrosshairRendererData = {
-		vertLine: {
-			lineWidth: 1,
-			lineStyle: 0,
-			color: '',
-			visible: false,
-		},
-		horzLine: {
-			lineWidth: 1,
-			lineStyle: 0,
-			color: '',
-			visible: false,
-		},
-		x: 0,
-		y: 0,
-	};
+	vertLine: {
+		lineWidth: 1,
+		lineStyle: 0,
+		color: '',
+		visible: false,
+	},
+	horzLine: {
+		lineWidth: 1,
+		lineStyle: 0,
+		color: '',
+		visible: false,
+	},
+	x: 0,
+	y: 0,
+	showCenterDot: false,
+	centerDotColor: '#2196F3',
+	centerDotRadius: 3,
+};
 	private _renderer: CrosshairRenderer = new CrosshairRenderer(this._rendererData);
 
 	public constructor(source: Crosshair, pane: Pane) {
@@ -70,5 +73,14 @@ export class CrosshairPaneView implements IPaneView {
 
 		data.x = this._source.appliedX();
 		data.y = this._source.appliedY();
+
+		// Update center dot properties
+data.showCenterDot = this._source.isDrawingMode();
+if (data.showCenterDot) {
+	const dotOptions = this._source.centerDotOptions();
+	data.centerDotColor = dotOptions.color;
+	data.centerDotRadius = dotOptions.radius;
+}
+
 	}
 }

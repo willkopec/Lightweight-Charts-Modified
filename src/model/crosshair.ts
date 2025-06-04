@@ -152,6 +152,10 @@ export class Crosshair extends DataSource {
 	private _originX: Coordinate = NaN as Coordinate;
 	private _originY: Coordinate = NaN as Coordinate;
 
+	private _showCenterDot: boolean = false;
+	private _centerDotColor: string = '#2196F3';
+	private _centerDotRadius: number = 3;
+
 	public constructor(model: IChartModelBase, options: CrosshairOptions) {
 		super();
 		this._model = model;
@@ -214,6 +218,28 @@ export class Crosshair extends DataSource {
 		this._originX = NaN as Coordinate;
 		this._originY = NaN as Coordinate;
 	}
+
+	public setDrawingMode(enabled: boolean, dotColor?: string, dotRadius?: number): void {
+    this._showCenterDot = enabled;
+    if (dotColor !== undefined) {
+        this._centerDotColor = dotColor;
+    }
+    if (dotRadius !== undefined) {
+        this._centerDotRadius = dotRadius;
+    }
+    this.updateAllViews();
+}
+
+public isDrawingMode(): boolean {
+    return this._showCenterDot;
+}
+
+public centerDotOptions(): { color: string; radius: number } {
+    return {
+        color: this._centerDotColor,
+        radius: this._centerDotRadius
+    };
+}
 
 	public originCoordX(): Coordinate {
 		return this._originX;

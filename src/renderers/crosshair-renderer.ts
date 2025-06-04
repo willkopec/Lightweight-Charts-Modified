@@ -15,6 +15,9 @@ export interface CrosshairRendererData {
 	horzLine: CrosshairLineStyle;
 	x: number;
 	y: number;
+	showCenterDot?: boolean;
+	centerDotColor?: string;
+	centerDotRadius?: number;
 }
 
 export class CrosshairRenderer extends BitmapCoordinatesPaneRenderer {
@@ -33,7 +36,7 @@ export class CrosshairRenderer extends BitmapCoordinatesPaneRenderer {
 		const vertLinesVisible = this._data.vertLine.visible;
 		const horzLinesVisible = this._data.horzLine.visible;
 
-		if (!vertLinesVisible && !horzLinesVisible) {
+		if (!vertLinesVisible && !horzLinesVisible && !this._data.showCenterDot) {
 			return;
 		}
 
@@ -56,6 +59,17 @@ export class CrosshairRenderer extends BitmapCoordinatesPaneRenderer {
 			ctx.fillStyle = this._data.horzLine.color;
 			setLineStyle(ctx, this._data.horzLine.lineStyle);
 			drawHorizontalLine(ctx, y, 0, bitmapSize.width);
+		}
+
+		// Draw center dot if enabled
+		if (this._data.showCenterDot && x >= 0 && y >= 0) {
+			const dotRadius = (this._data.centerDotRadius || 3) * Math.min(horizontalPixelRatio, verticalPixelRatio);
+			const dotColor = this._data.centerDotColor || this._data.vertLine.color || '#2196F3';
+			
+			ctx.fillStyle = dotColor;
+			ctx.beginPath();
+			ctx.arc(x, y, dotRadius, 0, 2 * Math.PI);
+			ctx.fill();
 		}
 	}
 }

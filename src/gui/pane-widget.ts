@@ -8,6 +8,7 @@ import {
 	tryCreateCanvasRenderingTarget2D,
 } from 'fancy-canvas';
 import { Trendline } from '../model/trendline';
+import { FibonacciRetracement } from '../model/fibonacci-retracement';
 
 import { ensureNotNull } from '../helpers/assertions';
 import { clearRect, clearRectWithGradient } from '../helpers/canvas-helpers';
@@ -89,6 +90,7 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 
 	private _isSettingSize: boolean = false;
 	private _trendlines: Map<string, Trendline> = new Map();
+	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
 
 	public constructor(chart: IChartWidgetBase, state: Pane) {
 		this._chart = chart;
@@ -235,9 +237,14 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 	}
 
 	public updateTrendlines(trendlines: Map<string, Trendline>): void {
-    	// Store trendlines for rendering
-    	this._trendlines = trendlines;
-	}
+    // Store trendlines for rendering
+    this._trendlines = trendlines;
+}
+
+public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciRetracement>): void {
+    // Store fibonacci retracements for rendering
+    this._fibonacciRetracements = fibonacciRetracements;
+}
 
 	public stretchFactor(): number {
 		return this._state !== null ? this._state.stretchFactor() : 0;
@@ -275,12 +282,75 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
     
     // Check if chart widget is in trendline drawing mode
     const chartWidget = this._chart as any;
+    console.log('Chart widget debug:', {
+        hasChart: !!chartWidget,
+        isDrawing: chartWidget._isDrawingTrendline,
+        startPoint: chartWidget._trendlineStartPoint,
+        chartType: typeof chartWidget
+    });
+    
     if (chartWidget._isDrawingTrendline) {
-        console.log('Skipping crosshair update during trendline drawing');
-        return; // Skip crosshair position update during trendline drawing
+        console.log('In trendline drawing mode, start point:', chartWidget._trendlineStartPoint);
+        // If we have a start point, update the preview line
+        if (chartWidget._trendlineStartPoint) {
+            console.log('Updating preview to:', x, y);
+            this._updateTrendlinePreview(x, y);
+        }
+        // Still update crosshair position for the dot, but don't use magnet
+        this._setCrosshairPosition(x, y, event);
+        return;
     }
     
     this._setCrosshairPosition(x, y, event);
+}
+
+private _updateTrendlinePreview(currentX: number, currentY: number): void {
+    const chartWidget = this._chart as any;
+    if (!chartWidget._trendlineStartPoint) {
+        return;
+    }
+    
+    // Store the preview end point for rendering
+const priceScale = this._state?.defaultPriceScale();
+const firstValue = priceScale?.firstValue();
+if (!priceScale || firstValue === null || firstValue === undefined) {
+    return;
+}
+
+const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as Coordinate, firstValue);
+    if (currentPrice === null) {
+        return;
+    }
+    
+    let currentTime: number;
+    
+    // Use the same extrapolation logic as trendline creation
+    const timeScale = this._model().timeScale() as any;
+    const baseIndex = timeScale._internal_baseIndex();
+    const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
+    
+    if (baseCoord !== null && currentX > baseCoord) {
+        currentTime = chartWidget._extrapolateTimeFromCoordinate(currentX);
+    } else {
+    const index = timeScale.coordinateToIndex(currentX as Coordinate);
+    if (index !== null && index !== undefined) {
+        const timePoint = timeScale.indexToTimeScalePoint(index)?.originalTime;
+        currentTime = timePoint !== undefined ? (timePoint as number) : chartWidget._extrapolateTimeFromCoordinate(currentX);
+    } else {
+        currentTime = chartWidget._extrapolateTimeFromCoordinate(currentX);
+    }
+}
+    
+    // Set the preview data for rendering
+    (chartWidget as any)._trendlinePreviewEnd = {
+        x: currentX,
+        y: currentY,
+        time: currentTime,
+        price: currentPrice
+    };
+    
+    // Trigger a light update to redraw the preview
+    this._model().lightUpdate();
 }
 
 	public mouseClickEvent(event: MouseEventHandlerMouseEvent): void {
@@ -514,6 +584,10 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 				}
 				// Draw trendlines
 				this._drawTrendlines(target);
+				// Draw trendline preview
+				this._drawTrendlinePreview(target);
+				// Draw fibonacci retracements
+				this._drawFibonacciRetracements(target);
 			}
 		}
 
@@ -528,6 +602,78 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 			this._drawSources(topTarget, sourceLabelPaneViews);
 		}
 	}
+
+	private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
+    const chartWidget = this._chart as any;
+    
+    console.log('Drawing preview check:', {
+        isDrawing: chartWidget._isDrawingTrendline,
+        hasStart: !!chartWidget._trendlineStartPoint,
+        hasPreview: !!chartWidget._trendlinePreviewEnd
+    });
+    
+    // Only draw preview if we're in trendline drawing mode and have both start and preview end points
+    if (!chartWidget._isDrawingTrendline || 
+        !chartWidget._trendlineStartPoint || 
+        !chartWidget._trendlinePreviewEnd) {
+        return;
+    }
+    
+    console.log('Actually drawing preview line');
+
+    const timeScale = this._model().timeScale() as any;
+    const priceScale = this._state?.defaultPriceScale() as any;
+    const firstValue = priceScale?._internal_firstValue();
+    
+    if (!priceScale || firstValue === null) {
+        return;
+    }
+
+    target.useBitmapCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        
+        try {
+            // Convert start point coordinates
+            const coords1 = this._timeAndPriceToCoordinates(
+                chartWidget._trendlineStartPoint.time, 
+                chartWidget._trendlineStartPoint.price, 
+                timeScale, 
+                priceScale, 
+                firstValue
+            );
+            
+            // Convert preview end point coordinates
+            const coords2 = this._timeAndPriceToCoordinates(
+                chartWidget._trendlinePreviewEnd.time, 
+                chartWidget._trendlinePreviewEnd.price, 
+                timeScale, 
+                priceScale, 
+                firstValue
+            );
+            
+            if (coords1 === null || coords2 === null) {
+                return;
+            }
+            
+            const { x: x1, y: y1 } = coords1;
+            const { x: x2, y: y2 } = coords2;
+            
+            ctx.save();
+            ctx.strokeStyle = '#2196F3'; // Blue color for preview
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.6; // Make it semi-transparent
+            ctx.setLineDash([5, 5]); // Dashed line for preview
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            ctx.restore();
+            
+        } catch (error) {
+            console.error('Error drawing trendline preview:', error);
+        }
+    });
+}
 
 	public leftPriceAxisWidget(): PriceAxisWidget | null {
 		return this._leftPriceAxisWidget;
@@ -904,6 +1050,95 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
                 
             } catch (error) {
                 console.error('Error drawing trendline:', error);
+            }
+        });
+    });
+}
+
+private _drawFibonacciRetracements(target: CanvasRenderingTarget2D): void {
+    if (this._state === null || this._fibonacciRetracements.size === 0) {
+        return;
+    }
+
+    const timeScale = this._model().timeScale() as any;
+    const priceScale = this._state.defaultPriceScale() as any;
+    const firstValue = priceScale._internal_firstValue();
+    
+    if (firstValue === null) {
+        return;
+    }
+
+    this._fibonacciRetracements.forEach((fibonacci) => {
+        target.useBitmapCoordinateSpace((scope) => {
+            const ctx = scope.context;
+            const options = fibonacci.options();
+            const data = fibonacci.data();
+            
+            try {
+                // Access the internal properties correctly
+                const point1Time = (data as any)._internal_point1._internal_time;
+                const point1Value = (data as any)._internal_point1._internal_value;
+                const point2Time = (data as any)._internal_point2._internal_time;
+                const point2Value = (data as any)._internal_point2._internal_value;
+                
+                console.log('Using times:', point1Time, point2Time);
+                console.log('Using values:', point1Value, point2Value);
+                
+                // Use the same coordinate conversion as trendlines
+                const coords1 = this._timeAndPriceToCoordinates(point1Time, point1Value, timeScale, priceScale, firstValue);
+                const coords2 = this._timeAndPriceToCoordinates(point2Time, point2Value, timeScale, priceScale, firstValue);
+                
+                if (coords1 === null || coords2 === null) {
+                    console.log('Could not convert coordinates for fibonacci retracement');
+                    return;
+                }
+                
+                // Get the X range for drawing
+                const startX = Math.min(coords1.x, coords2.x);
+                const endX = Math.max(coords1.x, coords2.x);
+                
+                // Calculate fibonacci levels manually since the model might not have access to internal data
+                const priceRange = Math.abs(point2Value - point1Value);
+                const isUptrend = point2Value > point1Value;
+                const baseLevelPrice = isUptrend ? point2Value : point1Value;
+                const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
+                
+                ctx.save();
+                ctx.strokeStyle = options.color;
+                ctx.lineWidth = options.lineWidth;
+                ctx.setLineDash([]);
+                
+                // Draw each fibonacci level as a horizontal line
+                levels.forEach((level) => {
+                    const retracement = priceRange * level;
+                    const levelPrice = isUptrend ? baseLevelPrice - retracement : baseLevelPrice + retracement;
+                    const priceY = priceScale._internal_priceToCoordinate(levelPrice, firstValue);
+                    
+                    if (priceY !== null) {
+                        // Draw horizontal line
+                        ctx.beginPath();
+                        ctx.moveTo(startX, priceY);
+                        ctx.lineTo(endX, priceY);
+                        ctx.stroke();
+                        
+                        // Draw label if enabled
+                        if (options.showLabels) {
+                            ctx.fillStyle = options.color;
+                            ctx.font = '12px Arial';
+                            ctx.textAlign = 'left';
+                            const percentage = `${(level * 100).toFixed(1)}%`;
+                            ctx.fillText(percentage, endX + 5, priceY + 4);
+                        }
+                    }
+                });
+                
+                ctx.restore();
+                
+                console.log('Drew fibonacci retracement with', levels.length, 'levels from', startX, 'to', endX);
+                
+            } catch (error) {
+                console.error('Error drawing fibonacci retracement:', error);
+                //console.error('Error details:', error.stack);
             }
         });
     });

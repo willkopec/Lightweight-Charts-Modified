@@ -33,6 +33,7 @@ import { HorzScaleOptions, ITimeScale, TimeScale } from './time-scale';
 import { TouchMouseEventData } from './touch-mouse-event-data';
 import { Trendline } from './trendline';
 import { TrendlineData } from './trendline-data';
+import { FibonacciRetracement } from './fibonacci-retracement';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -471,6 +472,7 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 
 	private _colorParser: ColorParser;
 	private _trendlines: Map<string, Trendline> = new Map();
+	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
 
 	public constructor(invalidateHandler: InvalidateHandler, options: ChartOptionsInternal<HorzScaleItem>, horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>) {
 		this._invalidateHandler = invalidateHandler;
@@ -523,6 +525,35 @@ public trendlines(): Map<string, Trendline> {
 
 public trendline(id: string): Trendline | undefined {
     return this._trendlines.get(id);
+}
+
+public addFibonacci(data: any, options?: any): string {
+    const fibonacciRetracement = new FibonacciRetracement(data, options);
+    this._fibonacciRetracements.set(data.id, fibonacciRetracement);
+    this.fullUpdate();
+    return data.id;
+}
+
+public removeFibonacci(id: string): void {
+    this._fibonacciRetracements.delete(id);
+    this.fullUpdate();
+}
+
+public updateFibonacci(id: string, point1?: any, point2?: any, options?: any): void {
+    const fibonacci = this._fibonacciRetracements.get(id);
+    if (fibonacci) {
+        if (point1 || point2) {
+            fibonacci.updatePoints(point1, point2);
+        }
+        if (options) {
+            fibonacci.applyOptions(options);
+        }
+        this.fullUpdate();
+    }
+}
+
+public fibonacciRetracements(): Map<string, FibonacciRetracement> {
+    return this._fibonacciRetracements;
 }
 
 	public fullUpdate(): void {
