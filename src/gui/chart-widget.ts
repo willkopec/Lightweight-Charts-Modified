@@ -350,13 +350,6 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
 	}
 
 	public setAndSaveCurrentPosition(x: Coordinate, y: Coordinate, event: TouchMouseEventData | null, pane: Pane, skipEvent?: boolean): void {
-    console.log('setAndSaveCurrentPosition called:', {
-        x: x,
-        y: y,
-        isDrawing: this._isDrawingTrendline,
-        hasStartPoint: !!this._trendlineStartPoint,
-        startPoint: this._trendlineStartPoint
-    });
     
     // Update trendline preview if we're in drawing mode and have a start point
     if (this._isDrawingTrendline && this._trendlineStartPoint) {
@@ -414,6 +407,8 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
 }
 
 	private _onTrendlineToolToggle(active: boolean): void {
+    console.log('Trendline tool toggled:', active ? 'ON' : 'OFF');
+    
     this._isDrawingTrendline = active;
     this._trendlineStartPoint = null;
     this._trendlinePreviewEnd = null;
@@ -421,20 +416,19 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
     // Store state in model so pane widgets can access it
     this._model.setTrendlineDrawingState(active);
     
-    console.log('Trendline drawing mode:', active ? 'ON' : 'OFF');
+    const crosshair = this._model.crosshairSource() as any;
     
     if (active) {
+        console.log('Activating trendline drawing mode');
+        
         this.setCursorStyle('crosshair');
 
-        // Force crosshair to be visible by setting it manually
-        const crosshair = this._model.crosshairSource() as any;
+        // Force crosshair to be visible and in drawing mode
         crosshair._visible = true;
         
-        // Enable crosshair center dot for drawing mode
-        this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
-        
-        // Force update all crosshair views
-        this._model.crosshairSource().updateAllViews();
+        // Set drawing mode FIRST before other operations
+        crosshair.setDrawingMode(true, '#2196F3', 3);
+        console.log('Crosshair drawing mode set, isDrawingMode =', crosshair.isDrawingMode());
         
         // Store original crosshair mode and switch to Normal mode (no snapping)
         const currentOptions = this._model.options();
@@ -447,19 +441,48 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
             }
         });
         
-        // Force another update after mode change
-        this._model.crosshairSource().updateAllViews();
+        // Set initial position if we have mouse coordinates
+        // This ensures the dot shows immediately when mode is activated
+        const mousePos = this._getLastMousePosition();
+        if (mousePos) {
+            // Set initial crosshair position to show the dot
+            crosshair._x = mousePos.x as Coordinate;
+            crosshair._y = mousePos.y as Coordinate;
+            crosshair._visible = true;
+            
+            // Calculate price for the initial position
+            const panes = this._model.panes();
+            if (panes.length > 0) {
+                const pane = panes[0];
+                const priceScale = pane.defaultPriceScale();
+                const firstValue = priceScale.firstValue();
+                if (firstValue !== null) {
+                    crosshair._price = priceScale.coordinateToPrice(mousePos.y as Coordinate, firstValue);
+                    crosshair._pane = pane;
+                }
+            }
+        }
+        
+        // Force update all crosshair views
+        crosshair.updateAllViews();
         this._model.fullUpdate();
         
-        // Verify the change was applied
-        const newOptions = this._model.options();
-        console.log('Crosshair mode after change:', newOptions.crosshair.mode);
+        // Debug check
+        console.log('Trendline drawing mode activated with crosshair state:', {
+            visible: crosshair._visible,
+            drawingMode: crosshair.isDrawingMode(),
+            showCenterDot: crosshair._showCenterDot,
+            x: crosshair._x,
+            y: crosshair._y
+        });
         
     } else {
+        console.log('Deactivating trendline drawing mode');
+        
         this.setCursorStyle(null);
 
         // Disable crosshair center dot
-        this._model.crosshairSource().setDrawingMode(false);
+        crosshair.setDrawingMode(false);
         
         // Restore original crosshair mode
         if (this._originalCrosshairMode !== null) {
@@ -473,9 +496,16 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
         }
         
         // Force update when exiting trendline mode
-        this._model.crosshairSource().updateAllViews();
+        crosshair.updateAllViews();
         this._model.fullUpdate();
     }
+}
+
+// Helper method to get last known mouse position (you may need to track this)
+private _getLastMousePosition(): { x: Coordinate; y: Coordinate } | null {
+    // You might want to track the last mouse position in mouse move events
+    // For now, return null if not available
+    return null;
 }
 
 private _onFibonacciToolToggle(active: boolean): void {
@@ -497,16 +527,11 @@ private _onFibonacciToolToggle(active: boolean): void {
             }
         });
         
-        // Verify the change was applied
-        const newOptions = this._model.options();
-        console.log('Crosshair mode after change:', newOptions.crosshair.mode);
-        
     } else {
         this.setCursorStyle(null);
         
         // Restore original crosshair mode
         if (this._originalCrosshairMode !== null) {
-            console.log('Restoring crosshair mode to:', this._originalCrosshairMode);
             this._model.applyOptions({
                 crosshair: {
                     mode: this._originalCrosshairMode
@@ -1089,16 +1114,8 @@ private _handleTrendlineClick(
     const baseIndex = timeScale._internal_baseIndex();
     const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
     
-    console.log('Click analysis:', {
-        clickX: point.x,
-        baseIndex,
-        baseCoord,
-        isBeyondData: point.x > (baseCoord || 0)
-    });
-    
     if (baseCoord !== null && point.x > baseCoord) {
         // Click is beyond the rightmost data point
-        console.log('Click detected beyond data range');
         timeValue = this._extrapolateTimeFromCoordinate(point.x);
     } else if (time !== null) {
         // Try to get time from the time index
@@ -1107,12 +1124,10 @@ private _handleTrendlineClick(
             timeValue = timePoint as number;
         } else {
             // Index exists but no time data - extrapolate
-            console.log('Index exists but no time data, extrapolating...');
             timeValue = this._extrapolateTimeFromCoordinate(point.x);
         }
     } else {
         // No time index at all - extrapolate
-        console.log('No time index, extrapolating...');
         timeValue = this._extrapolateTimeFromCoordinate(point.x);
     }
 
@@ -1131,8 +1146,6 @@ private _handleTrendlineClick(
         
         // Store in model
         this._model.setTrendlineStartPoint(this._trendlineStartPoint);
-        
-        console.log('Trendline start point set:', this._trendlineStartPoint);
     } else {
         // Second click - create trendline
         const endPoint = {
@@ -1141,8 +1154,6 @@ private _handleTrendlineClick(
             time: timeValue,
             price: price
         };
-        
-        console.log('Creating trendline from', this._trendlineStartPoint, 'to', endPoint);
         
         this._model.addTrendline({
             id: 'trendline_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
@@ -1298,16 +1309,6 @@ private _extrapolateTimeFromCoordinate(x: number): number {
     const prevTime = timeScale._internal_indexToTimeScalePoint(prevIndex)?.originalTime;
     const prevCoord = timeScale._internal_indexToCoordinate(prevIndex);
     
-    console.log('Extrapolation base data:', {
-        baseIndex,
-        baseTime,
-        baseCoord,
-        prevIndex,
-        prevTime,
-        prevCoord,
-        clickX: x
-    });
-    
     if (baseTime !== undefined && baseCoord !== null && 
         prevTime !== undefined && prevCoord !== null) {
         
@@ -1320,21 +1321,12 @@ private _extrapolateTimeFromCoordinate(x: number): number {
             const pixelsBeyondBase = x - baseCoord;
             const extrapolatedTime = (baseTime as number) + (pixelsBeyondBase * timePerPixel);
             
-            console.log('Successful extrapolation:', {
-                timeInterval,
-                coordInterval,
-                timePerPixel,
-                pixelsBeyondBase,
-                extrapolatedTime
-            });
-            
             return extrapolatedTime;
         }
     }
     
     // Fallback: assume daily intervals (86400 seconds)
     const fallbackTime = Date.now() / 1000 + (x * 86400 / 100);
-    console.log('Using fallback extrapolation:', fallbackTime);
     return fallbackTime;
 }
 

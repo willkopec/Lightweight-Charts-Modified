@@ -256,7 +256,7 @@ public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciR
 		}
 	}
 
-	public mouseEnterEvent(event: MouseEventHandlerMouseEvent): void {
+public mouseEnterEvent(event: MouseEventHandlerMouseEvent): void {
 		if (!this._state) {
 			return;
 		}
@@ -273,7 +273,10 @@ public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciR
 	}
 
 	public mouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
+    //console.log('=== MOUSE MOVE EVENT TRIGGERED ===', event.localX, event.localY);
+    
     if (!this._state) {
+        //console.log('No state, returning');
         return;
     }
     this._onMouseEvent();
@@ -285,20 +288,23 @@ public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciR
     const isDrawing = model.isDrawingTrendline();
     const startPoint = model.getTrendlineStartPoint();
     
+    //console.log('Mouse move - Drawing mode:', isDrawing, 'Coordinates:', x, y);
+    
     if (isDrawing) {
-        console.log('In trendline drawing mode, start point:', startPoint);
+        //console.log('=== IN TRENDLINE DRAWING MODE ===');
         // If we have a start point, update the preview line
         if (startPoint) {
-            console.log('Updating preview to:', x, y);
             this._updateTrendlinePreview(x, y);
         }
-        // Still update crosshair position for the dot, but don't use magnet
+        // ALWAYS update crosshair position for the dot in drawing mode
+        //console.log('About to call _setCrosshairPosition with:', x, y);
         this._setCrosshairPosition(x, y, event);
         return;
     }
     
     this._setCrosshairPosition(x, y, event);
 }
+
 
 private _updateTrendlinePreview(currentX: number, currentY: number): void {
     const model = this._model();
@@ -361,13 +367,6 @@ private _updateTrendlinePreview(currentX: number, currentY: number): void {
     
     // Set the preview data in the model
     model.setTrendlinePreviewEnd({
-        x: currentX,
-        y: currentY,
-        time: currentTime,
-        price: currentPrice
-    });
-    
-    console.log('Set preview end point:', {
         x: currentX,
         y: currentY,
         time: currentTime,
@@ -634,18 +633,13 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
     const startPoint = model.getTrendlineStartPoint();
     const previewEnd = model.getTrendlinePreviewEnd();
     
-    console.log('Drawing preview check:', {
-        isDrawing: isDrawing,
-        hasStart: !!startPoint,
-        hasPreview: !!previewEnd
-    });
     
     // Only draw preview if we're in trendline drawing mode and have both start and preview end points
     if (!isDrawing || !startPoint || !previewEnd) {
         return;
     }
     
-    console.log('Actually drawing preview line from:', startPoint, 'to:', previewEnd);
+    //console.log('Actually drawing preview line from:', startPoint, 'to:', previewEnd);
 
     target.useBitmapCoordinateSpace((scope) => {
         const ctx = scope.context;
@@ -668,7 +662,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
             ctx.stroke();
             ctx.restore();
             
-            console.log('Drew preview line from', x1, y1, 'to', x2, y2);
+            //console.log('Drew preview line from', x1, y1, 'to', x2, y2);
             
         } catch (error) {
             console.error('Error drawing trendline preview:', error);
@@ -816,12 +810,19 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
     const model = this._model();
     const isDrawing = model.isDrawingTrendline();
     
+    console.log('_setCrosshairPosition called with:', x, y, 'isDrawing:', isDrawing);
+    
     if (isDrawing) {
+        //console.log('=== IN TRENDLINE DRAWING MODE ===');
+        //console.log('About to call _setCrosshairPosition with:', x, y);
+        
         // During trendline drawing, show only the dot with completely free movement
         const priceScale = ensureNotNull(this._state).defaultPriceScale();
         const firstValue = priceScale.firstValue();
         if (firstValue !== null) {
             const price = priceScale.coordinateToPrice(y, firstValue);
+            
+            //console.log('Calculated price from coordinate:', price);
             
             // Directly manipulate crosshair for free movement
             const crosshair = this._model().crosshairSource() as any;
@@ -833,7 +834,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
             crosshair._x = x;
             crosshair._y = y;
             
-            // Use a dummy index that doesn't affect positioning
+            // Set a dummy index that doesn't affect positioning
             const timeScale = this._model().timeScale();
             const visibleRange = timeScale.visibleStrictRange();
             if (visibleRange !== null) {
@@ -842,11 +843,16 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
                 crosshair._index = 0 as TimePointIndex;
             }
             
-            // Make sure the crosshair shows the dot (drawing mode should already be set)
-            // Update only the cursor (dot), not the full crosshair
+            // Force the crosshair to update its drawing mode
+            crosshair.setDrawingMode(true, '#2196F3', 3);
+            
+            // Update all crosshair views to reflect the new position
+            crosshair.updateAllViews();
+            
+            // Trigger a cursor update to redraw
             this._model().cursorUpdate();
             
-            console.log('Set crosshair dot position freely:', x, y, 'price:', price);
+            //console.log('Set crosshair dot position freely:', x, y, 'price:', price);
         }
         return;
     }
@@ -1050,7 +1056,6 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
                 const coords2 = this._timeAndPriceToCoordinates(data.point2.time as number, data.point2.value, timeScale, priceScale, firstValue);
                 
                 if (coords1 === null || coords2 === null) {
-                    console.log('Could not convert coordinates for trendline');
                     return;
                 }
                 
@@ -1066,7 +1071,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
                 ctx.stroke();
                 ctx.restore();
                 
-                console.log('Drew trendline from', x1, y1, 'to', x2, y2, 'times:', data.point1.time, data.point2.time);
+                //console.log('Drew trendline from', x1, y1, 'to', x2, y2, 'times:', data.point1.time, data.point2.time);
                 
             } catch (error) {
                 console.error('Error drawing trendline:', error);

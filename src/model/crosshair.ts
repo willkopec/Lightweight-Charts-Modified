@@ -220,26 +220,29 @@ export class Crosshair extends DataSource {
 	}
 
 	public setDrawingMode(enabled: boolean, dotColor?: string, dotRadius?: number): void {
-    this._showCenterDot = enabled;
-    if (dotColor !== undefined) {
-        this._centerDotColor = dotColor;
-    }
-    if (dotRadius !== undefined) {
-        this._centerDotRadius = dotRadius;
-    }
-    this.updateAllViews();
-}
+		//console.log('Crosshair: setDrawingMode called with enabled =', enabled);
+		this._showCenterDot = enabled;
+		if (dotColor !== undefined) {
+			this._centerDotColor = dotColor;
+		}
+		if (dotRadius !== undefined) {
+			this._centerDotRadius = dotRadius;
+		}
+		//console.log('Crosshair: drawing mode set to', this._showCenterDot, 'color:', this._centerDotColor);
+		this.updateAllViews();
+	}
 
-public isDrawingMode(): boolean {
-    return this._showCenterDot;
-}
+	public isDrawingMode(): boolean {
+		//console.log('Crosshair: isDrawingMode() returning', this._showCenterDot);
+		return this._showCenterDot;
+	}
 
-public centerDotOptions(): { color: string; radius: number } {
-    return {
-        color: this._centerDotColor,
-        radius: this._centerDotRadius
-    };
-}
+	public centerDotOptions(): { color: string; radius: number } {
+		return {
+			color: this._centerDotColor,
+			radius: this._centerDotRadius
+		};
+	}
 
 	public originCoordX(): Coordinate {
 		return this._originX;

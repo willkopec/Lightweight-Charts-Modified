@@ -10,29 +10,30 @@ export class CrosshairPaneView implements IPaneView {
 	private readonly _pane: Pane;
 	private readonly _source: Crosshair;
 	private readonly _rendererData: CrosshairRendererData = {
-	vertLine: {
-		lineWidth: 1,
-		lineStyle: 0,
-		color: '',
-		visible: false,
-	},
-	horzLine: {
-		lineWidth: 1,
-		lineStyle: 0,
-		color: '',
-		visible: false,
-	},
-	x: 0,
-	y: 0,
-	showCenterDot: false,
-	centerDotColor: '#2196F3',
-	centerDotRadius: 3,
-};
+		vertLine: {
+			lineWidth: 1,
+			lineStyle: 0,
+			color: '',
+			visible: false,
+		},
+		horzLine: {
+			lineWidth: 1,
+			lineStyle: 0,
+			color: '',
+			visible: false,
+		},
+		x: 0,
+		y: 0,
+		showCenterDot: false,
+		centerDotColor: '#2196F3',
+		centerDotRadius: 3,
+	};
 	private _renderer: CrosshairRenderer = new CrosshairRenderer(this._rendererData);
 
 	public constructor(source: Crosshair, pane: Pane) {
 		this._source = source;
 		this._pane = pane;
+		console.log('CrosshairPaneView: Constructor called for pane');
 	}
 
 	public update(): void {
@@ -49,62 +50,64 @@ export class CrosshairPaneView implements IPaneView {
 	}
 
 	private _updateImpl(): void {
-    const visible = this._source.visible();
-    const crosshairOptions = this._pane.model().options().crosshair;
+		const visible = this._source.visible();
+		const crosshairOptions = this._pane.model().options().crosshair;
+		const model = this._pane.model();
 
-    const data = this._rendererData;
+		console.log('Crosshair view: isInDrawingMode =', this._source.isDrawingMode(), 'visible =', visible);
 
-    if (crosshairOptions.mode === CrosshairMode.Hidden) {
-        data.horzLine.visible = false;
-        data.vertLine.visible = false;
-        data.showCenterDot = false;
-        return;
-    }
+		const data = this._rendererData;
 
-    // Check if crosshair is in drawing mode (which we set when trendline mode is active)
-    const isInDrawingMode = this._source.isDrawingMode();
-    console.log('Crosshair view: isInDrawingMode =', isInDrawingMode);
+		if (crosshairOptions.mode === CrosshairMode.Hidden) {
+			data.horzLine.visible = false;
+			data.vertLine.visible = false;
+			data.showCenterDot = false;
+			return;
+		}
 
-    if (isInDrawingMode) {
-        // Drawing mode: hide lines, show dot only
-        data.horzLine.visible = false;
-        data.vertLine.visible = false;
-        data.showCenterDot = true;
-        
-        const dotOptions = this._source.centerDotOptions();
-        data.centerDotColor = dotOptions.color;
-        data.centerDotRadius = dotOptions.radius;
-        
-        data.x = this._source.appliedX();
-        data.y = this._source.appliedY();
-        
-        console.log('Crosshair view: DRAWING MODE - showing dot only');
-        return;
-    }
+		// Check if we're in trendline drawing mode from the model
+		const isDrawingTrendline = model.isDrawingTrendline();
+		const isInDrawingMode = this._source.isDrawingMode() || isDrawingTrendline;
+		
+		console.log('Crosshair view: model.isDrawingTrendline() =', isDrawingTrendline);
+		console.log('Crosshair view: combined isInDrawingMode =', isInDrawingMode);
 
-    // Normal crosshair behavior
-    data.horzLine.visible = visible && this._source.horzLineVisible(this._pane);
-    data.vertLine.visible = visible && this._source.vertLineVisible();
+		if (isInDrawingMode) {
+			// Drawing mode: hide lines, show dot only
+			data.horzLine.visible = false;
+			data.vertLine.visible = false;
+			data.showCenterDot = true;
+			
+			const dotOptions = this._source.centerDotOptions();
+			data.centerDotColor = dotOptions.color;
+			data.centerDotRadius = dotOptions.radius;
+			
+			data.x = this._source.appliedX();
+			data.y = this._source.appliedY();
+			
+			console.log('Crosshair view: DRAWING MODE - showing dot only at', data.x, data.y);
+			console.log('Crosshair view: dot color =', data.centerDotColor, 'radius =', data.centerDotRadius);
+			return;
+		}
 
-    data.horzLine.lineWidth = crosshairOptions.horzLine.width;
-    data.horzLine.lineStyle = crosshairOptions.horzLine.style;
-    data.horzLine.color = crosshairOptions.horzLine.color;
+		// Normal crosshair behavior
+		data.horzLine.visible = visible && this._source.horzLineVisible(this._pane);
+		data.vertLine.visible = visible && this._source.vertLineVisible();
 
-    data.vertLine.lineWidth = crosshairOptions.vertLine.width;
-    data.vertLine.lineStyle = crosshairOptions.vertLine.style;
-    data.vertLine.color = crosshairOptions.vertLine.color;
+		data.horzLine.lineWidth = crosshairOptions.horzLine.width;
+		data.horzLine.lineStyle = crosshairOptions.horzLine.style;
+		data.horzLine.color = crosshairOptions.horzLine.color;
 
-    data.x = this._source.appliedX();
-    data.y = this._source.appliedY();
+		data.vertLine.lineWidth = crosshairOptions.vertLine.width;
+		data.vertLine.lineStyle = crosshairOptions.vertLine.style;
+		data.vertLine.color = crosshairOptions.vertLine.color;
 
-    // Normal mode: use drawing mode for center dot
-    data.showCenterDot = isInDrawingMode;
-    if (data.showCenterDot) {
-        const dotOptions = this._source.centerDotOptions();
-        data.centerDotColor = dotOptions.color;
-        data.centerDotRadius = dotOptions.radius;
-    }
-    
-    console.log('Crosshair view: NORMAL mode, lines visible:', data.horzLine.visible, data.vertLine.visible, 'dot visible:', data.showCenterDot);
-}
+		data.x = this._source.appliedX();
+		data.y = this._source.appliedY();
+
+		// Normal mode: don't show center dot
+		data.showCenterDot = false;
+		
+		console.log('Crosshair view: NORMAL mode, lines visible:', data.horzLine.visible, data.vertLine.visible, 'dot visible:', data.showCenterDot);
+	}
 }

@@ -349,4 +349,8 @@ export interface IChartApiBase<HorzScaleItem = Time> {
 	addTrendline(x1: number, y1: number, x2: number, y2: number, options?: any): string;
 	removeTrendline(id: string): void;
 	updateTrendline(id: string, x1?: number, y1?: number, x2?: number, y2?: number, options?: any): void;
+
+	addFibonacci(x1: number, y1: number, x2: number, y2: number, options?: any): string;
+	removeFibonacci(id: string): void;
+	updateFibonacci(id: string, x1?: number, y1?: number, x2?: number, y2?: number, options?: any): void;
 }
