@@ -416,14 +416,25 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
 	private _onTrendlineToolToggle(active: boolean): void {
     this._isDrawingTrendline = active;
     this._trendlineStartPoint = null;
-	this._trendlinePreviewEnd = null;
+    this._trendlinePreviewEnd = null;
+    
+    // Store state in model so pane widgets can access it
+    this._model.setTrendlineDrawingState(active);
+    
     console.log('Trendline drawing mode:', active ? 'ON' : 'OFF');
     
     if (active) {
         this.setCursorStyle('crosshair');
 
-		// Enable crosshair center dot for drawing mode
-this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
+        // Force crosshair to be visible by setting it manually
+        const crosshair = this._model.crosshairSource() as any;
+        crosshair._visible = true;
+        
+        // Enable crosshair center dot for drawing mode
+        this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
+        
+        // Force update all crosshair views
+        this._model.crosshairSource().updateAllViews();
         
         // Store original crosshair mode and switch to Normal mode (no snapping)
         const currentOptions = this._model.options();
@@ -436,6 +447,10 @@ this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
             }
         });
         
+        // Force another update after mode change
+        this._model.crosshairSource().updateAllViews();
+        this._model.fullUpdate();
+        
         // Verify the change was applied
         const newOptions = this._model.options();
         console.log('Crosshair mode after change:', newOptions.crosshair.mode);
@@ -443,8 +458,8 @@ this._model.crosshairSource().setDrawingMode(true, '#2196F3', 3);
     } else {
         this.setCursorStyle(null);
 
-		// Disable crosshair center dot
-this._model.crosshairSource().setDrawingMode(false);
+        // Disable crosshair center dot
+        this._model.crosshairSource().setDrawingMode(false);
         
         // Restore original crosshair mode
         if (this._originalCrosshairMode !== null) {
@@ -456,6 +471,10 @@ this._model.crosshairSource().setDrawingMode(false);
             });
             this._originalCrosshairMode = null;
         }
+        
+        // Force update when exiting trendline mode
+        this._model.crosshairSource().updateAllViews();
+        this._model.fullUpdate();
     }
 }
 
@@ -1109,6 +1128,10 @@ private _handleTrendlineClick(
             time: timeValue,
             price: price
         };
+        
+        // Store in model
+        this._model.setTrendlineStartPoint(this._trendlineStartPoint);
+        
         console.log('Trendline start point set:', this._trendlineStartPoint);
     } else {
         // Second click - create trendline
@@ -1121,7 +1144,6 @@ private _handleTrendlineClick(
         
         console.log('Creating trendline from', this._trendlineStartPoint, 'to', endPoint);
         
-        // Create the trendline with only time/price data
         this._model.addTrendline({
             id: 'trendline_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
             point1: { 
@@ -1138,8 +1160,8 @@ private _handleTrendlineClick(
         this._isDrawingTrendline = false;
         this._trendlineStartPoint = null;
         this._trendlinePreviewEnd = null;
+        this._model.setTrendlineDrawingState(false);
         this.setCursorStyle(null);
-        // Disable crosshair center dot
         this._model.crosshairSource().setDrawingMode(false);
         this._toolbarWidget?.deactivateTrendlineTool();
     }
@@ -1147,6 +1169,21 @@ private _handleTrendlineClick(
 
 public getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null {
     return this._trendlinePreviewEnd;
+}
+
+public setTrendlinePreviewEnd(previewEnd: { x: number; y: number; time: number; price: number }): void {
+    this._trendlinePreviewEnd = previewEnd;
+}
+
+// In src/gui/chart-widget.ts
+// Add this method after the existing getTrendlinePreviewEnd method:
+
+public isDrawingTrendline(): boolean {
+    return this._isDrawingTrendline;
+}
+
+public getTrendlineStartPoint(): { x: number; y: number; time: number; price: number } | null {
+    return this._trendlineStartPoint;
 }
 
 private _handleFibonacciClick(

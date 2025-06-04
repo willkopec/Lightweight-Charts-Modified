@@ -440,6 +440,14 @@ export interface IChartModelBase {
 	changePanesHeight(paneIndex: number, height: number): void;
 
 	colorParser(): ColorParser;
+
+	setTrendlineDrawingState(isDrawing: boolean): void;
+	isDrawingTrendline(): boolean;
+	setTrendlineStartPoint(point: { x: number; y: number; time: number; price: number } | null): void;
+	getTrendlineStartPoint(): { x: number; y: number; time: number; price: number } | null;
+	setTrendlinePreviewEnd(point: { x: number; y: number; time: number; price: number } | null): void;
+	getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null;
+
 }
 
 function isPanePrimitive(source: IPriceDataSource | IPrimitiveHitTestSource): source is IPrimitiveHitTestSource | Pane {
@@ -473,6 +481,10 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 	private _colorParser: ColorParser;
 	private _trendlines: Map<string, Trendline> = new Map();
 	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
+
+	private _isDrawingTrendline: boolean = false;
+	private _trendlineStartPoint: { x: number; y: number; time: number; price: number } | null = null;
+	private _trendlinePreviewEnd: { x: number; y: number; time: number; price: number } | null = null;
 
 	public constructor(invalidateHandler: InvalidateHandler, options: ChartOptionsInternal<HorzScaleItem>, horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>) {
 		this._invalidateHandler = invalidateHandler;
@@ -1233,4 +1245,34 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 			this.fullUpdate();
 		}
 	}
+
+	public setTrendlineDrawingState(isDrawing: boolean): void {
+    this._isDrawingTrendline = isDrawing;
+    if (!isDrawing) {
+        this._trendlineStartPoint = null;
+        this._trendlinePreviewEnd = null;
+    }
+}
+
+public isDrawingTrendline(): boolean {
+    return this._isDrawingTrendline;
+}
+
+public setTrendlineStartPoint(point: { x: number; y: number; time: number; price: number } | null): void {
+    this._trendlineStartPoint = point;
+}
+
+public getTrendlineStartPoint(): { x: number; y: number; time: number; price: number } | null {
+    return this._trendlineStartPoint;
+}
+
+public setTrendlinePreviewEnd(point: { x: number; y: number; time: number; price: number } | null): void {
+    this._trendlinePreviewEnd = point;
+}
+
+public getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null {
+    return this._trendlinePreviewEnd;
+
+}
+
 }

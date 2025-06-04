@@ -92,8 +92,8 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 	private _trendlines: Map<string, Trendline> = new Map();
 	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
 
-	public constructor(chart: IChartWidgetBase, state: Pane) {
-		this._chart = chart;
+public constructor(chart: IChartWidgetBase, state: Pane) {
+    this._chart = chart;
 
 		this._state = state;
 		this._state.onDestroyed().subscribe(this._onStateDestroyed.bind(this), this, true);
@@ -280,19 +280,15 @@ public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciR
     const x = event.localX;
     const y = event.localY;
     
-    // Check if chart widget is in trendline drawing mode
-    const chartWidget = this._chart as any;
-    console.log('Chart widget debug:', {
-        hasChart: !!chartWidget,
-        isDrawing: chartWidget._isDrawingTrendline,
-        startPoint: chartWidget._trendlineStartPoint,
-        chartType: typeof chartWidget
-    });
+    // Get trendline state from model
+    const model = this._model();
+    const isDrawing = model.isDrawingTrendline();
+    const startPoint = model.getTrendlineStartPoint();
     
-    if (chartWidget._isDrawingTrendline) {
-        console.log('In trendline drawing mode, start point:', chartWidget._trendlineStartPoint);
+    if (isDrawing) {
+        console.log('In trendline drawing mode, start point:', startPoint);
         // If we have a start point, update the preview line
-        if (chartWidget._trendlineStartPoint) {
+        if (startPoint) {
             console.log('Updating preview to:', x, y);
             this._updateTrendlinePreview(x, y);
         }
@@ -305,49 +301,78 @@ public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciR
 }
 
 private _updateTrendlinePreview(currentX: number, currentY: number): void {
-    const chartWidget = this._chart as any;
-    if (!chartWidget._trendlineStartPoint) {
+    const model = this._model();
+    const startPoint = model.getTrendlineStartPoint();
+    if (!startPoint) {
         return;
     }
     
     // Store the preview end point for rendering
-const priceScale = this._state?.defaultPriceScale();
-const firstValue = priceScale?.firstValue();
-if (!priceScale || firstValue === null || firstValue === undefined) {
-    return;
-}
+    const priceScale = this._state?.defaultPriceScale();
+    const firstValue = priceScale?.firstValue();
+    if (!priceScale || firstValue === null || firstValue === undefined) {
+        return;
+    }
 
-const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as Coordinate, firstValue);
+    const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as Coordinate, firstValue);
     if (currentPrice === null) {
         return;
     }
     
     let currentTime: number;
     
-    // Use the same extrapolation logic as trendline creation
+    // Use the extrapolation logic directly here
     const timeScale = this._model().timeScale() as any;
     const baseIndex = timeScale._internal_baseIndex();
     const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
     
     if (baseCoord !== null && currentX > baseCoord) {
-        currentTime = chartWidget._extrapolateTimeFromCoordinate(currentX);
+        // Beyond data range - extrapolate
+        const baseTime = timeScale._internal_indexToTimeScalePoint(baseIndex)?.originalTime;
+        const prevIndex = baseIndex - 1;
+        const prevTime = timeScale._internal_indexToTimeScalePoint(prevIndex)?.originalTime;
+        const prevCoord = timeScale._internal_indexToCoordinate(prevIndex);
+        
+        if (baseTime !== undefined && baseCoord !== null && 
+            prevTime !== undefined && prevCoord !== null) {
+            
+            const timeInterval = (baseTime as number) - (prevTime as number);
+            const coordInterval = baseCoord - prevCoord;
+            
+            if (coordInterval !== 0) {
+                const timePerPixel = timeInterval / coordInterval;
+                const pixelsBeyondBase = currentX - baseCoord;
+                currentTime = (baseTime as number) + (pixelsBeyondBase * timePerPixel);
+            } else {
+                currentTime = Date.now() / 1000;
+            }
+        } else {
+            currentTime = Date.now() / 1000;
+        }
     } else {
-    const index = timeScale.coordinateToIndex(currentX as Coordinate);
-    if (index !== null && index !== undefined) {
-        const timePoint = timeScale.indexToTimeScalePoint(index)?.originalTime;
-        currentTime = timePoint !== undefined ? (timePoint as number) : chartWidget._extrapolateTimeFromCoordinate(currentX);
-    } else {
-        currentTime = chartWidget._extrapolateTimeFromCoordinate(currentX);
+        const index = timeScale.coordinateToIndex(currentX as Coordinate);
+        if (index !== null && index !== undefined) {
+            const timePoint = timeScale.indexToTimeScalePoint(index)?.originalTime;
+            currentTime = timePoint !== undefined ? (timePoint as number) : Date.now() / 1000;
+        } else {
+            currentTime = Date.now() / 1000;
+        }
     }
-}
     
-    // Set the preview data for rendering
-    (chartWidget as any)._trendlinePreviewEnd = {
+    // Set the preview data in the model
+    model.setTrendlinePreviewEnd({
         x: currentX,
         y: currentY,
         time: currentTime,
         price: currentPrice
-    };
+    });
+    
+    console.log('Set preview end point:', {
+        x: currentX,
+        y: currentY,
+        time: currentTime,
+        price: currentPrice
+    });
     
     // Trigger a light update to redraw the preview
     this._model().lightUpdate();
@@ -603,60 +628,34 @@ const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as
 		}
 	}
 
-	private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
-    const chartWidget = this._chart as any;
+private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
+    const model = this._model();
+    const isDrawing = model.isDrawingTrendline();
+    const startPoint = model.getTrendlineStartPoint();
+    const previewEnd = model.getTrendlinePreviewEnd();
     
     console.log('Drawing preview check:', {
-        isDrawing: chartWidget._isDrawingTrendline,
-        hasStart: !!chartWidget._trendlineStartPoint,
-        hasPreview: !!chartWidget._trendlinePreviewEnd
+        isDrawing: isDrawing,
+        hasStart: !!startPoint,
+        hasPreview: !!previewEnd
     });
     
     // Only draw preview if we're in trendline drawing mode and have both start and preview end points
-    if (!chartWidget._isDrawingTrendline || 
-        !chartWidget._trendlineStartPoint || 
-        !chartWidget._trendlinePreviewEnd) {
+    if (!isDrawing || !startPoint || !previewEnd) {
         return;
     }
     
-    console.log('Actually drawing preview line');
-
-    const timeScale = this._model().timeScale() as any;
-    const priceScale = this._state?.defaultPriceScale() as any;
-    const firstValue = priceScale?._internal_firstValue();
-    
-    if (!priceScale || firstValue === null) {
-        return;
-    }
+    console.log('Actually drawing preview line from:', startPoint, 'to:', previewEnd);
 
     target.useBitmapCoordinateSpace((scope) => {
         const ctx = scope.context;
         
         try {
-            // Convert start point coordinates
-            const coords1 = this._timeAndPriceToCoordinates(
-                chartWidget._trendlineStartPoint.time, 
-                chartWidget._trendlineStartPoint.price, 
-                timeScale, 
-                priceScale, 
-                firstValue
-            );
-            
-            // Convert preview end point coordinates
-            const coords2 = this._timeAndPriceToCoordinates(
-                chartWidget._trendlinePreviewEnd.time, 
-                chartWidget._trendlinePreviewEnd.price, 
-                timeScale, 
-                priceScale, 
-                firstValue
-            );
-            
-            if (coords1 === null || coords2 === null) {
-                return;
-            }
-            
-            const { x: x1, y: y1 } = coords1;
-            const { x: x2, y: y2 } = coords2;
+            // Use stored coordinates directly
+            const x1 = startPoint.x * scope.horizontalPixelRatio;
+            const y1 = startPoint.y * scope.verticalPixelRatio;
+            const x2 = previewEnd.x * scope.horizontalPixelRatio;
+            const y2 = previewEnd.y * scope.verticalPixelRatio;
             
             ctx.save();
             ctx.strokeStyle = '#2196F3'; // Blue color for preview
@@ -668,6 +667,8 @@ const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as
             ctx.lineTo(x2, y2);
             ctx.stroke();
             ctx.restore();
+            
+            console.log('Drew preview line from', x1, y1, 'to', x2, y2);
             
         } catch (error) {
             console.error('Error drawing trendline preview:', error);
@@ -812,26 +813,45 @@ const currentPrice = (priceScale as any)._internal_coordinateToPrice(currentY as
 	}
 
 	private _setCrosshairPosition(x: Coordinate, y: Coordinate, event: MouseEventHandlerEventBase): void {
-    // Check if chart widget is in trendline drawing mode
-    const chartWidget = this._chart as any;
-    if (chartWidget._isDrawingTrendline) {
-        // During trendline drawing, set position without magnet alignment
+    const model = this._model();
+    const isDrawing = model.isDrawingTrendline();
+    
+    if (isDrawing) {
+        // During trendline drawing, show only the dot with completely free movement
         const priceScale = ensureNotNull(this._state).defaultPriceScale();
         const firstValue = priceScale.firstValue();
         if (firstValue !== null) {
             const price = priceScale.coordinateToPrice(y, firstValue);
-            const timeScale = this._model().timeScale();
-            const index = timeScale.coordinateToIndex(x); // Remove the second parameter
             
-            // Set crosshair position directly without magnet
-            this._model().crosshairSource().setPosition(index, price, ensureNotNull(this._state));
+            // Directly manipulate crosshair for free movement
+            const crosshair = this._model().crosshairSource() as any;
+            
+            // Force crosshair to be visible with dot only
+            crosshair._visible = true;
+            crosshair._pane = ensureNotNull(this._state);
+            crosshair._price = price;
+            crosshair._x = x;
+            crosshair._y = y;
+            
+            // Use a dummy index that doesn't affect positioning
+            const timeScale = this._model().timeScale();
+            const visibleRange = timeScale.visibleStrictRange();
+            if (visibleRange !== null) {
+                crosshair._index = Math.floor((visibleRange.left() + visibleRange.right()) / 2) as TimePointIndex;
+            } else {
+                crosshair._index = 0 as TimePointIndex;
+            }
+            
+            // Make sure the crosshair shows the dot (drawing mode should already be set)
+            // Update only the cursor (dot), not the full crosshair
             this._model().cursorUpdate();
-            console.log('Set crosshair position without magnet:', x, y, 'price:', price);
+            
+            console.log('Set crosshair dot position freely:', x, y, 'price:', price);
         }
         return;
     }
     
-    // Normal crosshair positioning (with magnet)
+    // Normal crosshair positioning (with magnet/snapping)
     this._model().setAndSaveCurrentPosition(this._correctXCoord(x), this._correctYCoord(y), event, ensureNotNull(this._state));
 }
 
