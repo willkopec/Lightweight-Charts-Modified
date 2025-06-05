@@ -327,42 +327,105 @@ private _updateTrendlinePreview(currentX: number, currentY: number): void {
     
     let currentTime: number;
     
-    // Use the extrapolation logic directly here
+    // Use a unified approach for time calculation that works both inside and outside data range
     const timeScale = this._model().timeScale() as any;
-    const baseIndex = timeScale._internal_baseIndex();
-    const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
     
-    if (baseCoord !== null && currentX > baseCoord) {
-        // Beyond data range - extrapolate
-        const baseTime = timeScale._internal_indexToTimeScalePoint(baseIndex)?.originalTime;
-        const prevIndex = baseIndex - 1;
-        const prevTime = timeScale._internal_indexToTimeScalePoint(prevIndex)?.originalTime;
-        const prevCoord = timeScale._internal_indexToCoordinate(prevIndex);
+    // Try to get the time using coordinate conversion first
+    try {
+        // Get visible range to determine if we need extrapolation
+        const visibleRange = timeScale.visibleStrictRange();
+        const baseIndex = timeScale._internal_baseIndex();
+        const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
         
-        if (baseTime !== undefined && baseCoord !== null && 
-            prevTime !== undefined && prevCoord !== null) {
+        if (visibleRange && baseCoord !== null && currentX > baseCoord) {
+            // Beyond data range - use extrapolation
+            const baseTime = timeScale._internal_indexToTimeScalePoint(baseIndex)?.originalTime;
+            const prevIndex = baseIndex - 1;
+            const prevTime = timeScale._internal_indexToTimeScalePoint(prevIndex)?.originalTime;
+            const prevCoord = timeScale._internal_indexToCoordinate(prevIndex);
             
-            const timeInterval = (baseTime as number) - (prevTime as number);
-            const coordInterval = baseCoord - prevCoord;
-            
-            if (coordInterval !== 0) {
-                const timePerPixel = timeInterval / coordInterval;
-                const pixelsBeyondBase = currentX - baseCoord;
-                currentTime = (baseTime as number) + (pixelsBeyondBase * timePerPixel);
+            if (baseTime !== undefined && prevTime !== undefined && prevCoord !== null) {
+                const timeInterval = (baseTime as number) - (prevTime as number);
+                const coordInterval = baseCoord - prevCoord;
+                
+                if (coordInterval !== 0) {
+                    const timePerPixel = timeInterval / coordInterval;
+                    const pixelsBeyondBase = currentX - baseCoord;
+                    currentTime = (baseTime as number) + (pixelsBeyondBase * timePerPixel);
+                } else {
+                    currentTime = (baseTime as number);
+                }
             } else {
                 currentTime = Date.now() / 1000;
             }
         } else {
-            currentTime = Date.now() / 1000;
+            // Within or before data range - use interpolation
+            // Get two reference points for interpolation
+            let leftIndex: number = -1, rightIndex: number = -1;
+            let leftCoord: number = -1, rightCoord: number = -1;
+            let leftTime: number, rightTime: number;
+            
+            if (visibleRange) {
+                const leftVisibleIndex = Math.floor(visibleRange.left());
+                const rightVisibleIndex = Math.ceil(visibleRange.right());
+                
+                // Find the two closest data points around currentX
+                let foundLeft = false, foundRight = false;
+                
+                for (let i = leftVisibleIndex; i <= rightVisibleIndex; i++) {
+                    const coord = timeScale._internal_indexToCoordinate(i);
+                    if (coord !== null) {
+                        if (coord <= currentX && (!foundLeft || i > leftIndex)) {
+                            leftIndex = i;
+                            leftCoord = coord;
+                            foundLeft = true;
+                        }
+                        if (coord >= currentX && (!foundRight || i < rightIndex || rightIndex === -1)) {
+                            rightIndex = i;
+                            rightCoord = coord;
+                            foundRight = true;
+                        }
+                    }
+                }
+                
+                // If we found both bounds, interpolate
+                if (foundLeft && foundRight && leftIndex !== rightIndex && leftIndex !== -1 && rightIndex !== -1) {
+                    const leftTimePoint = timeScale._internal_indexToTimeScalePoint(leftIndex)?.originalTime;
+                    const rightTimePoint = timeScale._internal_indexToTimeScalePoint(rightIndex)?.originalTime;
+                    
+                    if (leftTimePoint !== undefined && rightTimePoint !== undefined) {
+                        leftTime = leftTimePoint as number;
+                        rightTime = rightTimePoint as number;
+                        
+                        // Linear interpolation
+                        const coordRatio = (currentX - leftCoord) / (rightCoord - leftCoord);
+                        currentTime = leftTime + (rightTime - leftTime) * coordRatio;
+                    } else {
+                        // Fallback to closest point
+                        const closestIndex = Math.abs(currentX - leftCoord) < Math.abs(currentX - rightCoord) ? leftIndex : rightIndex;
+                        const closestTime = timeScale._internal_indexToTimeScalePoint(closestIndex)?.originalTime;
+                        currentTime = closestTime !== undefined ? (closestTime as number) : Date.now() / 1000;
+                    }
+                } else if (foundLeft && leftIndex !== -1) {
+                    // Only left bound found, use it
+                    const leftTimePoint = timeScale._internal_indexToTimeScalePoint(leftIndex)?.originalTime;
+                    currentTime = leftTimePoint !== undefined ? (leftTimePoint as number) : Date.now() / 1000;
+                } else if (foundRight && rightIndex !== -1) {
+                    // Only right bound found, use it
+                    const rightTimePoint = timeScale._internal_indexToTimeScalePoint(rightIndex)?.originalTime;
+                    currentTime = rightTimePoint !== undefined ? (rightTimePoint as number) : Date.now() / 1000;
+                } else {
+                    // No bounds found, fallback
+                    currentTime = Date.now() / 1000;
+                }
+            } else {
+                // No visible range, fallback
+                currentTime = Date.now() / 1000;
+            }
         }
-    } else {
-        const index = timeScale.coordinateToIndex(currentX as Coordinate);
-        if (index !== null && index !== undefined) {
-            const timePoint = timeScale.indexToTimeScalePoint(index)?.originalTime;
-            currentTime = timePoint !== undefined ? (timePoint as number) : Date.now() / 1000;
-        } else {
-            currentTime = Date.now() / 1000;
-        }
+    } catch (error) {
+        console.error('Error calculating time for preview:', error);
+        currentTime = Date.now() / 1000;
     }
     
     // Set the preview data in the model
