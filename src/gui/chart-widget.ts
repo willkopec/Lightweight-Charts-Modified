@@ -416,18 +416,18 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
     // Store state in model so pane widgets can access it
     this._model.setTrendlineDrawingState(active);
     
-    const crosshair = this._model.crosshairSource() as any;
+    const crosshair = this._model.crosshairSource();
     
     if (active) {
         console.log('Activating trendline drawing mode');
         
-        this.setCursorStyle('crosshair');
+        this.setCursorStyle('default');
 
         // Force crosshair to be visible and in drawing mode
         crosshair._visible = true;
         
         // Set drawing mode FIRST before other operations
-        crosshair.setDrawingMode(true, '#2196F3', 3);
+        crosshair._showCenterDot = true;
         console.log('Crosshair drawing mode set, isDrawingMode =', crosshair.isDrawingMode());
         
         // Store original crosshair mode and switch to Normal mode (no snapping)
@@ -482,7 +482,7 @@ private _updateTrendlinePreview(x: Coordinate, y: Coordinate, pane: Pane): void 
         this.setCursorStyle(null);
 
         // Disable crosshair center dot
-        crosshair.setDrawingMode(false);
+        crosshair._showCenterDot = false;
         
         // Restore original crosshair mode
         if (this._originalCrosshairMode !== null) {
@@ -518,7 +518,6 @@ private _onFibonacciToolToggle(active: boolean): void {
         
         // Store original crosshair mode and switch to Normal mode (no snapping)
         const currentOptions = this._model.options();
-        console.log('Current crosshair mode before change:', currentOptions.crosshair.mode);
         this._originalCrosshairMode = currentOptions.crosshair.mode;
         
         this._model.applyOptions({

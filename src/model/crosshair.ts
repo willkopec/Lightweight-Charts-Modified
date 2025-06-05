@@ -1,3 +1,5 @@
+// src/model/crosshair.ts - Updated implementation
+
 import { ensureNotNull } from '../helpers/assertions';
 import { notNull } from '../helpers/strict-type-checks';
 
@@ -133,10 +135,10 @@ type RawCoordinateProvider = () => Coordinate;
 type RawIndexProvider = () => TimePointIndex;
 
 export class Crosshair extends DataSource {
-	private _pane: Pane | null = null;
-	private _price: number = NaN;
-	private _index: TimePointIndex = 0 as TimePointIndex;
-	private _visible: boolean = false; // initially the crosshair should not be visible, until the user interacts.
+	public _pane: Pane | null = null;
+	public _price: number = NaN;
+	public _index: TimePointIndex = 0 as TimePointIndex;
+	public _visible: boolean = false; // initially the crosshair should not be visible, until the user interacts.
 	private readonly _model: IChartModelBase;
 	private _priceAxisViews: Map<PriceScale, CrosshairPriceAxisView> = new Map();
 	private readonly _timeAxisView: CrosshairTimeAxisView;
@@ -146,13 +148,13 @@ export class Crosshair extends DataSource {
 
 	private _crosshairPaneViewCache: WeakMap<Pane, CrosshairPaneView> = new WeakMap();
 	private readonly _markersPaneViewCache: WeakMap<Pane, CrosshairMarksPaneView> = new WeakMap();
-	private _x: Coordinate = NaN as Coordinate;
-	private _y: Coordinate = NaN as Coordinate;
+	public _x: Coordinate = NaN as Coordinate;
+	public _y: Coordinate = NaN as Coordinate;
 
 	private _originX: Coordinate = NaN as Coordinate;
 	private _originY: Coordinate = NaN as Coordinate;
 
-	private _showCenterDot: boolean = false;
+	public _showCenterDot: boolean = false;
 	private _centerDotColor: string = '#2196F3';
 	private _centerDotRadius: number = 3;
 
@@ -220,7 +222,7 @@ export class Crosshair extends DataSource {
 	}
 
 	public setDrawingMode(enabled: boolean, dotColor?: string, dotRadius?: number): void {
-		//console.log('Crosshair: setDrawingMode called with enabled =', enabled);
+		console.log('Crosshair: setDrawingMode called with enabled =', enabled);
 		this._showCenterDot = enabled;
 		if (dotColor !== undefined) {
 			this._centerDotColor = dotColor;
@@ -228,12 +230,12 @@ export class Crosshair extends DataSource {
 		if (dotRadius !== undefined) {
 			this._centerDotRadius = dotRadius;
 		}
-		//console.log('Crosshair: drawing mode set to', this._showCenterDot, 'color:', this._centerDotColor);
+		console.log('Crosshair: drawing mode set to', this._showCenterDot, 'color:', this._centerDotColor);
 		this.updateAllViews();
 	}
 
 	public isDrawingMode(): boolean {
-		//console.log('Crosshair: isDrawingMode() returning', this._showCenterDot);
+		console.log('Crosshair: isDrawingMode() returning', this._showCenterDot);
 		return this._showCenterDot;
 	}
 

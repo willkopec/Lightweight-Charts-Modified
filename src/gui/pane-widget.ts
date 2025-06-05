@@ -813,8 +813,8 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
     console.log('_setCrosshairPosition called with:', x, y, 'isDrawing:', isDrawing);
     
     if (isDrawing) {
-        //console.log('=== IN TRENDLINE DRAWING MODE ===');
-        //console.log('About to call _setCrosshairPosition with:', x, y);
+        console.log('=== IN TRENDLINE DRAWING MODE ===');
+        console.log('About to call _setCrosshairPosition with:', x, y);
         
         // During trendline drawing, show only the dot with completely free movement
         const priceScale = ensureNotNull(this._state).defaultPriceScale();
@@ -822,10 +822,10 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
         if (firstValue !== null) {
             const price = priceScale.coordinateToPrice(y, firstValue);
             
-            //console.log('Calculated price from coordinate:', price);
+            console.log('Calculated price from coordinate:', price);
             
             // Directly manipulate crosshair for free movement
-            const crosshair = this._model().crosshairSource() as any;
+            const crosshair = this._model().crosshairSource();
             
             // Force crosshair to be visible with dot only
             crosshair._visible = true;
@@ -843,8 +843,13 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
                 crosshair._index = 0 as TimePointIndex;
             }
             
-            // Force the crosshair to update its drawing mode
-            crosshair.setDrawingMode(true, '#2196F3', 3);
+            // Force the crosshair to drawing mode - check if method exists first
+            if (typeof crosshair.setDrawingMode === 'function') {
+                crosshair._showCenterDot = true;
+            } else {
+                // Fallback: directly set the drawing mode properties
+                crosshair._showCenterDot = true;
+            }
             
             // Update all crosshair views to reflect the new position
             crosshair.updateAllViews();
@@ -852,7 +857,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
             // Trigger a cursor update to redraw
             this._model().cursorUpdate();
             
-            //console.log('Set crosshair dot position freely:', x, y, 'price:', price);
+            console.log('Set crosshair dot position freely:', x, y, 'price:', price);
         }
         return;
     }
