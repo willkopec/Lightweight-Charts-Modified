@@ -36,6 +36,27 @@ import { drawBackground, drawForeground, DrawFunction, drawSourceViews, ViewsGet
 import { MouseEventHandler, MouseEventHandlerEventBase, MouseEventHandlerMouseEvent, MouseEventHandlers, MouseEventHandlerTouchEvent, Position, TouchMouseEvent } from './mouse-event-handler';
 import { PriceAxisWidget, PriceAxisWidgetSide } from './price-axis-widget';
 
+const SELECTION_DOT_RADIUS = 6;
+const SELECTION_HIT_TOLERANCE = 8;
+const LINE_HIT_TOLERANCE = 5;
+
+// Add these interfaces before the class
+interface TrendlineSelectionState {
+    selectedTrendlineId: string | null;
+    dragState: {
+        isDragging: boolean;
+        dragPointIndex: number; // 0 for point1, 1 for point2
+        startMousePos: Point;
+        originalPoint: { time: number; value: number };
+    } | null;
+}
+
+interface TrendlineHitResult {
+    trendlineId: string;
+    hitType: 'line' | 'point1' | 'point2';
+    distance: number;
+}
+
 const enum KineticScrollConstants {
 	MinScrollSpeed = 0.2,
 	MaxScrollSpeed = 7,
@@ -91,6 +112,11 @@ export class PaneWidget implements IDestroyable, MouseEventHandlers {
 	private _isSettingSize: boolean = false;
 	private _trendlines: Map<string, Trendline> = new Map();
 	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
+
+	private _trendlineSelection: TrendlineSelectionState = {
+    	selectedTrendlineId: null,
+    	dragState: null
+	};
 
 public constructor(chart: IChartWidgetBase, state: Pane) {
     this._chart = chart;
@@ -241,6 +267,363 @@ public constructor(chart: IChartWidgetBase, state: Pane) {
     this._trendlines = trendlines;
 }
 
+public selectTrendline(trendlineId: string | null): void {
+    this._trendlineSelection.selectedTrendlineId = trendlineId;
+    this._model().lightUpdate(); // Trigger redraw
+}
+
+public getSelectedTrendline(): string | null {
+    return this._trendlineSelection.selectedTrendlineId;
+}
+
+public clearTrendlineSelection(): void {
+    this._trendlineSelection.selectedTrendlineId = null;
+    this._trendlineSelection.dragState = null;
+    this._model().lightUpdate();
+}
+
+// Coordinate conversion helper
+private _convertTimeAndPriceToCoordinates(
+    targetTime: number, 
+    targetPrice: number, 
+    timeScale: any, 
+    priceScale: any, 
+    firstValue: any
+): { x: number; y: number } | null {
+    
+    // Check if this time is beyond our data range by comparing to base time
+    const baseIndex = timeScale._internal_baseIndex();
+    const baseTime = timeScale._internal_indexToTimeScalePoint(baseIndex)?.originalTime;
+    
+    if (baseTime !== undefined && targetTime > (baseTime as number)) {
+        // This is definitely an extrapolated time - force manual calculation
+        return this._forceExtrapolateCoordinate(targetTime, targetPrice, timeScale, priceScale, firstValue);
+    }
+    
+    // Try normal coordinate conversion for times within data range
+    const index = timeScale._internal_timeToIndex(targetTime, true);
+    
+    if (index !== null) {
+        // Normal case: time exists in data
+        const x = timeScale._internal_indexToCoordinate(index);
+        const y = priceScale._internal_priceToCoordinate(targetPrice, firstValue);
+        
+        if (x !== null && y !== null) {
+            return { x, y };
+        }
+    }
+    
+    // Fallback to extrapolation
+    return this._forceExtrapolateCoordinate(targetTime, targetPrice, timeScale, priceScale, firstValue);
+}
+
+// Hit testing for trendlines
+private _hitTestTrendlines(x: number, y: number): TrendlineHitResult | null {
+    if (this._state === null || this._trendlines.size === 0) {
+        return null;
+    }
+
+    const timeScale = this._model().timeScale() as any;
+    const priceScale = this._state.defaultPriceScale() as any;
+    const firstValue = priceScale._internal_firstValue();
+    
+    if (firstValue === null) {
+        return null;
+    }
+
+    let closestHit: TrendlineHitResult | null = null;
+    let closestDistance = Infinity;
+
+    this._trendlines.forEach((trendline, id) => {
+        const data = trendline.data();
+        
+        // Convert both points to coordinates
+        const coords1 = this._convertTimeAndPriceToCoordinates(data.point1.time as number, data.point1.value, timeScale, priceScale, firstValue);
+        const coords2 = this._convertTimeAndPriceToCoordinates(data.point2.time as number, data.point2.value, timeScale, priceScale, firstValue);
+        
+        if (coords1 === null || coords2 === null) {
+            return;
+        }
+        
+        // Test hit on endpoints first (they have priority)
+        const dist1 = Math.sqrt(Math.pow(x - coords1.x, 2) + Math.pow(y - coords1.y, 2));
+        if (dist1 <= SELECTION_HIT_TOLERANCE && dist1 < closestDistance) {
+            closestHit = { trendlineId: id, hitType: 'point1', distance: dist1 };
+            closestDistance = dist1;
+        }
+        
+        const dist2 = Math.sqrt(Math.pow(x - coords2.x, 2) + Math.pow(y - coords2.y, 2));
+        if (dist2 <= SELECTION_HIT_TOLERANCE && dist2 < closestDistance) {
+            closestHit = { trendlineId: id, hitType: 'point2', distance: dist2 };
+            closestDistance = dist2;
+        }
+        
+        // Test hit on line if no point hit
+        if (closestHit === null || closestHit.hitType === 'line') {
+            const lineDist = this._distanceToLine(x, y, coords1.x, coords1.y, coords2.x, coords2.y);
+            if (lineDist <= LINE_HIT_TOLERANCE && lineDist < closestDistance) {
+                closestHit = { trendlineId: id, hitType: 'line', distance: lineDist };
+                closestDistance = lineDist;
+            }
+        }
+    });
+
+    return closestHit;
+}
+
+// Distance from point to line segment
+private _distanceToLine(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    
+    if (dx === 0 && dy === 0) {
+        // Line is actually a point
+        return Math.sqrt(Math.pow(px - x1, 2) + Math.pow(py - y1, 2));
+    }
+    
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+    const projection = { x: x1 + t * dx, y: y1 + t * dy };
+    
+    return Math.sqrt(Math.pow(px - projection.x, 2) + Math.pow(py - projection.y, 2));
+}
+
+// Handle trendline mouse down
+private _handleTrendlineMouseDown(hit: TrendlineHitResult, event: MouseEventHandlerMouseEvent): void {
+    // Select the trendline
+    this.selectTrendline(hit.trendlineId);
+    
+    // If clicking on a point, start dragging
+    if (hit.hitType === 'point1' || hit.hitType === 'point2') {
+        const trendline = this._trendlines.get(hit.trendlineId);
+        if (trendline) {
+            // Debug logging
+            console.log('Trendline object:', trendline);
+            console.log('Trendline data:', trendline.data());
+            console.log('Trendline methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(trendline)));
+            console.log('Model methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(this._model())));
+            
+            const data = trendline.data();
+            const pointIndex = hit.hitType === 'point1' ? 0 : 1;
+            const originalPoint = pointIndex === 0 ? data.point1 : data.point2;
+            
+            this._trendlineSelection.dragState = {
+                isDragging: true,
+                dragPointIndex: pointIndex,
+                startMousePos: { x: event.localX, y: event.localY },
+                originalPoint: { time: originalPoint.time as number, value: originalPoint.value }
+            };
+            
+            // Change cursor to grabbing
+            this._topCanvasBinding.canvasElement.style.cursor = 'grabbing';
+        }
+    }
+    
+    // Prevent normal mouse down behavior
+    event.preventDefault?.();
+}
+
+// Handle trendline dragging
+private _handleTrendlineDrag(event: MouseEventHandlerMouseEvent): void {
+    const dragState = this._trendlineSelection.dragState;
+    const selectedId = this._trendlineSelection.selectedTrendlineId;
+    
+    if (!dragState || !selectedId) {
+        return;
+    }
+    
+    const trendline = this._trendlines.get(selectedId);
+    if (!trendline) {
+        return;
+    }
+    
+    // Convert mouse coordinates to time and price - use simple approach
+    const timeScale = this._model().timeScale() as any;
+    const priceScale = this._state?.defaultPriceScale();
+    const firstValue = priceScale?.firstValue();
+    if (!priceScale || firstValue === null || firstValue === undefined) {
+        return;
+    }
+
+    const currentPrice = (priceScale as any)._internal_coordinateToPrice(event.localY as Coordinate, firstValue);
+    if (currentPrice === null) {
+        return;
+    }
+    
+    const currentX = event.localX;
+    let currentTime: number;
+    
+    // Simple time conversion - try direct coordinate to index conversion first
+    const index = timeScale._internal_coordinateToIndex(currentX);
+    if (index !== null) {
+        const timePoint = timeScale._internal_indexToTimeScalePoint(index);
+        if (timePoint?.originalTime !== undefined) {
+            currentTime = timePoint.originalTime as number;
+        } else {
+            // If no time point, use extrapolation
+            currentTime = this._extrapolateTimeFromCoordinate(currentX, timeScale);
+        }
+    } else {
+        // Index is null, definitely need extrapolation
+        currentTime = this._extrapolateTimeFromCoordinate(currentX, timeScale);
+    }
+    
+    console.log('Dragging to new position:', { x: currentX, time: currentTime, price: currentPrice });
+    
+    try {
+        // Get the data object and modify it directly
+        const data = trendline.data() as any;
+        
+        if (dragState.dragPointIndex === 0) {
+            // Update point1 - modify existing structure
+            if (data._internal_point1) {
+                data._internal_point1._internal_time = currentTime;
+                data._internal_point1._internal_value = currentPrice;
+            }
+        } else {
+            // Update point2 - modify existing structure
+            if (data._internal_point2) {
+                data._internal_point2._internal_time = currentTime;
+                data._internal_point2._internal_value = currentPrice;
+            }
+            if (data.point2) {
+                data.point2.time = currentTime;
+                data.point2.value = currentPrice;
+            }
+        }
+        
+        console.log('Modified data:', data);
+        
+        // Just trigger a redraw
+        this._model().lightUpdate();
+        
+    } catch (error) {
+        console.error('Error updating trendline:', error);
+    }
+}
+
+private _extrapolateTimeFromCoordinate(x: number, timeScale: any): number {
+    try {
+        const baseIndex = timeScale._internal_baseIndex();
+        const baseCoord = timeScale._internal_indexToCoordinate(baseIndex);
+        const baseTime = timeScale._internal_indexToTimeScalePoint(baseIndex)?.originalTime;
+        
+        const prevIndex = baseIndex - 1;
+        const prevCoord = timeScale._internal_indexToCoordinate(prevIndex);
+        const prevTime = timeScale._internal_indexToTimeScalePoint(prevIndex)?.originalTime;
+        
+        if (baseTime !== undefined && prevTime !== undefined && 
+            baseCoord !== null && prevCoord !== null) {
+            
+            const timeInterval = (baseTime as number) - (prevTime as number);
+            const coordInterval = baseCoord - prevCoord;
+            
+            if (coordInterval !== 0) {
+                const timePerPixel = timeInterval / coordInterval;
+                const pixelDiff = x - baseCoord;
+                return (baseTime as number) + (pixelDiff * timePerPixel);
+            }
+        }
+        
+        // Fallback
+        return Date.now() / 1000;
+    } catch (error) {
+        console.error('Error extrapolating time:', error);
+        return Date.now() / 1000;
+    }
+}
+
+// Update cursor based on hover
+private _updateCursorForTrendlineHover(x: number, y: number): void {
+    const hit = this._hitTestTrendlines(x, y);
+    const canvas = this._topCanvasBinding.canvasElement;
+    
+    if (hit) {
+        if (hit.hitType === 'point1' || hit.hitType === 'point2') {
+            canvas.style.cursor = 'grab';
+        } else {
+            canvas.style.cursor = 'pointer';
+        }
+    } else {
+        canvas.style.cursor = 'default';
+    }
+}
+
+// Draw selection indicators
+private _drawTrendlineSelectionIndicators(target: CanvasRenderingTarget2D): void {
+    if (!this._trendlineSelection.selectedTrendlineId || this._state === null) {
+        return;
+    }
+
+    const selectedTrendline = this._trendlines.get(this._trendlineSelection.selectedTrendlineId);
+    if (!selectedTrendline) {
+        return;
+    }
+
+    const timeScale = this._model().timeScale() as any;
+    const priceScale = this._state.defaultPriceScale() as any;
+    const firstValue = priceScale._internal_firstValue();
+    
+    if (firstValue === null) {
+        return;
+    }
+
+    const data = selectedTrendline.data();
+    
+    // Convert both points to coordinates
+    const coords1 = this._convertTimeAndPriceToCoordinates(data.point1.time as number, data.point1.value, timeScale, priceScale, firstValue);
+    const coords2 = this._convertTimeAndPriceToCoordinates(data.point2.time as number, data.point2.value, timeScale, priceScale, firstValue);
+    
+    if (coords1 === null || coords2 === null) {
+        return;
+    }
+
+    target.useBitmapCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        
+        try {
+            const x1 = coords1.x * scope.horizontalPixelRatio;
+            const y1 = coords1.y * scope.verticalPixelRatio;
+            const x2 = coords2.x * scope.horizontalPixelRatio;
+            const y2 = coords2.y * scope.verticalPixelRatio;
+            
+            ctx.save();
+            
+            // Draw selection dots at both endpoints
+            const dotRadius = SELECTION_DOT_RADIUS * scope.horizontalPixelRatio;
+            
+            // Point 1 dot
+            ctx.fillStyle = '#2196F3';
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2 * scope.horizontalPixelRatio;
+            ctx.beginPath();
+            ctx.arc(x1, y1, dotRadius, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Point 2 dot
+            ctx.beginPath();
+            ctx.arc(x2, y2, dotRadius, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Highlight the selected trendline
+            ctx.strokeStyle = '#2196F3';
+            ctx.lineWidth = 3 * scope.horizontalPixelRatio;
+            ctx.globalAlpha = 0.8;
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            
+            ctx.restore();
+            
+        } catch (error) {
+            console.error('Error drawing trendline selection indicators:', error);
+        }
+    });
+}
+
 public updateFibonacciRetracements(fibonacciRetracements: Map<string, FibonacciRetracement>): void {
     // Store fibonacci retracements for rendering
     this._fibonacciRetracements = fibonacciRetracements;
@@ -267,18 +650,33 @@ public mouseEnterEvent(event: MouseEventHandlerMouseEvent): void {
 	}
 
 	public mouseDownEvent(event: MouseEventHandlerMouseEvent): void {
-		this._onMouseEvent();
-		this._mouseTouchDownEvent();
-		this._setCrosshairPosition(event.localX, event.localY, event);
-	}
-
-	public mouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
-    //console.log('=== MOUSE MOVE EVENT TRIGGERED ===', event.localX, event.localY);
+    this._onMouseEvent();
     
-    if (!this._state) {
-        //console.log('No state, returning');
+    // Check for trendline interaction first
+    const trendlineHit = this._hitTestTrendlines(event.localX, event.localY);
+    if (trendlineHit) {
+        this._handleTrendlineMouseDown(trendlineHit, event);
         return;
     }
+    
+    // Clear trendline selection if clicking elsewhere
+    this.clearTrendlineSelection();
+    
+    this._mouseTouchDownEvent();
+    this._setCrosshairPosition(event.localX, event.localY, event);
+}
+
+	public mouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
+    if (!this._state) {
+        return;
+    }
+    
+    // Handle trendline dragging
+    if (this._trendlineSelection.dragState?.isDragging) {
+        this._handleTrendlineDrag(event);
+        return;
+    }
+    
     this._onMouseEvent();
     const x = event.localX;
     const y = event.localY;
@@ -288,19 +686,18 @@ public mouseEnterEvent(event: MouseEventHandlerMouseEvent): void {
     const isDrawing = model.isDrawingTrendline();
     const startPoint = model.getTrendlineStartPoint();
     
-    //console.log('Mouse move - Drawing mode:', isDrawing, 'Coordinates:', x, y);
-    
     if (isDrawing) {
-        //console.log('=== IN TRENDLINE DRAWING MODE ===');
         // If we have a start point, update the preview line
         if (startPoint) {
             this._updateTrendlinePreview(x, y);
         }
         // ALWAYS update crosshair position for the dot in drawing mode
-        //console.log('About to call _setCrosshairPosition with:', x, y);
         this._setCrosshairPosition(x, y, event);
         return;
     }
+    
+    // Change cursor based on hover state
+    this._updateCursorForTrendlineHover(x, y);
     
     this._setCrosshairPosition(x, y, event);
 }
@@ -460,21 +857,36 @@ private _updateTrendlinePreview(currentX: number, currentY: number): void {
 	}
 
 	public pressedMouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
-		this._onMouseEvent();
-		this._pressedMouseTouchMoveEvent(event);
-		this._setCrosshairPosition(event.localX, event.localY, event);
-	}
+    this._onMouseEvent();
+    
+    // Handle trendline dragging
+    if (this._trendlineSelection.dragState?.isDragging) {
+        this._handleTrendlineDrag(event);
+        return;
+    }
+    
+    this._pressedMouseTouchMoveEvent(event);
+    this._setCrosshairPosition(event.localX, event.localY, event);
+}
 
 	public mouseUpEvent(event: MouseEventHandlerMouseEvent): void {
-		if (this._state === null) {
-			return;
-		}
-		this._onMouseEvent();
+    if (this._state === null) {
+        return;
+    }
+    this._onMouseEvent();
 
-		this._longTap = false;
+    // Handle end of trendline dragging
+    if (this._trendlineSelection.dragState?.isDragging) {
+        this._trendlineSelection.dragState.isDragging = false;
+        this._topCanvasBinding.canvasElement.style.cursor = 'default';
+        // Keep the selection but stop dragging
+        this._trendlineSelection.dragState = null;
+        return;
+    }
 
-		this._endScroll(event);
-	}
+    this._longTap = false;
+    this._endScroll(event);
+}
 
 	public tapEvent(event: MouseEventHandlerTouchEvent): void {
 		if (this._state === null) {
@@ -493,14 +905,17 @@ private _updateTrendlinePreview(currentX: number, currentY: number): void {
 	}
 
 	public mouseLeaveEvent(event: MouseEventHandlerMouseEvent): void {
-		if (this._state === null) {
-			return;
-		}
-		this._onMouseEvent();
+    if (this._state === null) {
+        return;
+    }
+    this._onMouseEvent();
 
-		this._state.model().setHoveredSource(null);
-		this._clearCrosshairPosition();
-	}
+    // Reset cursor when leaving
+    this._topCanvasBinding.canvasElement.style.cursor = 'default';
+
+    this._state.model().setHoveredSource(null);
+    this._clearCrosshairPosition();
+}
 
 	public clicked(): ISubscription<TimePointIndex | null, Point, TouchMouseEventData> {
 		return this._clicked;
@@ -685,8 +1100,10 @@ private _updateTrendlinePreview(currentX: number, currentY: number): void {
 				ctx.clearRect(0, 0, bitmapSize.width, bitmapSize.height);
 			});
 			this._drawCrosshair(topTarget);
-			this._drawSources(topTarget, sourceTopPaneViews);
-			this._drawSources(topTarget, sourceLabelPaneViews);
+this._drawSources(topTarget, sourceTopPaneViews);
+this._drawSources(topTarget, sourceLabelPaneViews);
+// Add this new line:
+this._drawTrendlineSelectionIndicators(topTarget);
 		}
 	}
 
@@ -873,11 +1290,11 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
     const model = this._model();
     const isDrawing = model.isDrawingTrendline();
     
-    console.log('_setCrosshairPosition called with:', x, y, 'isDrawing:', isDrawing);
+    //console.log('_setCrosshairPosition called with:', x, y, 'isDrawing:', isDrawing);
     
     if (isDrawing) {
-        console.log('=== IN TRENDLINE DRAWING MODE ===');
-        console.log('About to call _setCrosshairPosition with:', x, y);
+        //console.log('=== IN TRENDLINE DRAWING MODE ===');
+        //console.log('About to call _setCrosshairPosition with:', x, y);
         
         // During trendline drawing, show only the dot with completely free movement
         const priceScale = ensureNotNull(this._state).defaultPriceScale();
@@ -885,7 +1302,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
         if (firstValue !== null) {
             const price = priceScale.coordinateToPrice(y, firstValue);
             
-            console.log('Calculated price from coordinate:', price);
+            //console.log('Calculated price from coordinate:', price);
             
             // Directly manipulate crosshair for free movement
             const crosshair = this._model().crosshairSource();
@@ -920,7 +1337,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
             // Trigger a cursor update to redraw
             this._model().cursorUpdate();
             
-            console.log('Set crosshair dot position freely:', x, y, 'price:', price);
+            //console.log('Set crosshair dot position freely:', x, y, 'price:', price);
         }
         return;
     }
@@ -1112,7 +1529,7 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
         return;
     }
 
-    this._trendlines.forEach((trendline) => {
+    this._trendlines.forEach((trendline, id) => {
         target.useBitmapCoordinateSpace((scope) => {
             const ctx = scope.context;
             const options = trendline.options();
@@ -1131,13 +1548,21 @@ private _drawTrendlinePreview(target: CanvasRenderingTarget2D): void {
                 const { x: x2, y: y2 } = coords2;
                 
                 ctx.save();
-                ctx.strokeStyle = options.color;
-                ctx.lineWidth = options.lineWidth;
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.stroke();
-                ctx.restore();
+
+// Use different styling if this trendline is selected
+if (id === this._trendlineSelection.selectedTrendlineId) {
+    ctx.strokeStyle = '#2196F3'; // Blue for selected
+    ctx.lineWidth = options.lineWidth + 1; // Slightly thicker
+} else {
+    ctx.strokeStyle = options.color;
+    ctx.lineWidth = options.lineWidth;
+}
+
+ctx.beginPath();
+ctx.moveTo(x1, y1);
+ctx.lineTo(x2, y2);
+ctx.stroke();
+ctx.restore();
                 
                 //console.log('Drew trendline from', x1, y1, 'to', x2, y2, 'times:', data.point1.time, data.point2.time);
                 
