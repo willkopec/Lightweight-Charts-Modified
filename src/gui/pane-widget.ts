@@ -40,21 +40,25 @@ const SELECTION_DOT_RADIUS = 6;
 const SELECTION_HIT_TOLERANCE = 8;
 const LINE_HIT_TOLERANCE = 5;
 
-// Add these interfaces before the class
-interface TrendlineSelectionState {
-    selectedTrendlineId: string | null;
-    dragState: {
-        isDragging: boolean;
-        dragPointIndex: number; // 0 for point1, 1 for point2
-        startMousePos: Point;
-        originalPoint: { time: number; value: number };
-    } | null;
-}
-
 interface TrendlineHitResult {
     trendlineId: string;
     hitType: 'line' | 'point1' | 'point2';
     distance: number;
+}
+
+interface TrendlineSelectionState {
+    selectedTrendlineId: string | null;
+    dragState: {
+        isDragging: boolean;
+        dragType: 'point' | 'line'; // New: track if dragging a point or the whole line
+        dragPointIndex: number; // 0 for point1, 1 for point2 (only used when dragType is 'point')
+        startMousePos: Point;
+        originalPoint: { time: number; value: number }; // Only used for point dragging
+        originalLine?: { // New: store both points for line dragging
+            point1: { time: number; value: number };
+            point2: { time: number; value: number };
+        };
+    } | null;
 }
 
 const enum KineticScrollConstants {
@@ -392,30 +396,48 @@ private _handleTrendlineMouseDown(hit: TrendlineHitResult, event: MouseEventHand
     // Select the trendline
     this.selectTrendline(hit.trendlineId);
     
-    // If clicking on a point, start dragging
-    if (hit.hitType === 'point1' || hit.hitType === 'point2') {
-        const trendline = this._trendlines.get(hit.trendlineId);
-        if (trendline) {
-            // Debug logging
-            console.log('Trendline object:', trendline);
-            console.log('Trendline data:', trendline.data());
-            console.log('Trendline methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(trendline)));
-            console.log('Model methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(this._model())));
-            
-            const data = trendline.data();
+    const trendline = this._trendlines.get(hit.trendlineId);
+    if (trendline) {
+        const data = trendline.data() as any;
+        
+        if (hit.hitType === 'point1' || hit.hitType === 'point2') {
+            // Dragging a specific point
             const pointIndex = hit.hitType === 'point1' ? 0 : 1;
-            const originalPoint = pointIndex === 0 ? data.point1 : data.point2;
+            const originalPoint = pointIndex === 0 ? data._internal_point1 : data._internal_point2;
             
             this._trendlineSelection.dragState = {
                 isDragging: true,
+                dragType: 'point',
                 dragPointIndex: pointIndex,
                 startMousePos: { x: event.localX, y: event.localY },
-                originalPoint: { time: originalPoint.time as number, value: originalPoint.value }
+                originalPoint: { 
+                    time: originalPoint._internal_time, 
+                    value: originalPoint._internal_value 
+                }
             };
-            
-            // Change cursor to grabbing
-            this._topCanvasBinding.canvasElement.style.cursor = 'grabbing';
+        } else if (hit.hitType === 'line') {
+            // Dragging the whole line
+            this._trendlineSelection.dragState = {
+                isDragging: true,
+                dragType: 'line',
+                dragPointIndex: -1, // Not applicable for line dragging
+                startMousePos: { x: event.localX, y: event.localY },
+                originalPoint: { time: 0, value: 0 }, // Not used for line dragging
+                originalLine: {
+                    point1: {
+                        time: data._internal_point1._internal_time,
+                        value: data._internal_point1._internal_value
+                    },
+                    point2: {
+                        time: data._internal_point2._internal_time,
+                        value: data._internal_point2._internal_value
+                    }
+                }
+            };
         }
+        
+        // Change cursor
+        this._topCanvasBinding.canvasElement.style.cursor = 'grabbing';
     }
     
     // Prevent normal mouse down behavior
@@ -436,68 +458,113 @@ private _handleTrendlineDrag(event: MouseEventHandlerMouseEvent): void {
         return;
     }
     
-    // Convert mouse coordinates to time and price - use simple approach
-    const timeScale = this._model().timeScale() as any;
-    const priceScale = this._state?.defaultPriceScale();
-    const firstValue = priceScale?.firstValue();
-    if (!priceScale || firstValue === null || firstValue === undefined) {
-        return;
-    }
+    if (dragState.dragType === 'point') {
+        // Point dragging logic
+        const timeScale = this._model().timeScale() as any;
+        const priceScale = this._state?.defaultPriceScale();
+        const firstValue = priceScale?.firstValue();
+        if (!priceScale || firstValue === null || firstValue === undefined) {
+            return;
+        }
 
-    const currentPrice = (priceScale as any)._internal_coordinateToPrice(event.localY as Coordinate, firstValue);
-    if (currentPrice === null) {
-        return;
-    }
-    
-    const currentX = event.localX;
-    let currentTime: number;
-    
-    // Simple time conversion - try direct coordinate to index conversion first
-    const index = timeScale._internal_coordinateToIndex(currentX);
-    if (index !== null) {
-        const timePoint = timeScale._internal_indexToTimeScalePoint(index);
-        if (timePoint?.originalTime !== undefined) {
-            currentTime = timePoint.originalTime as number;
+        const currentPrice = (priceScale as any)._internal_coordinateToPrice(event.localY as Coordinate, firstValue);
+        if (currentPrice === null) {
+            return;
+        }
+        
+        const currentX = event.localX;
+        let currentTime: number;
+        
+        // Simple time conversion - try direct coordinate to index conversion first
+        const index = timeScale._internal_coordinateToIndex(currentX);
+        if (index !== null) {
+            const timePoint = timeScale._internal_indexToTimeScalePoint(index);
+            if (timePoint?.originalTime !== undefined) {
+                currentTime = timePoint.originalTime as number;
+            } else {
+                currentTime = this._extrapolateTimeFromCoordinate(currentX, timeScale);
+            }
         } else {
-            // If no time point, use extrapolation
             currentTime = this._extrapolateTimeFromCoordinate(currentX, timeScale);
         }
-    } else {
-        // Index is null, definitely need extrapolation
-        currentTime = this._extrapolateTimeFromCoordinate(currentX, timeScale);
-    }
-    
-    console.log('Dragging to new position:', { x: currentX, time: currentTime, price: currentPrice });
-    
-    try {
-        // Get the data object and modify it directly
-        const data = trendline.data() as any;
         
-        if (dragState.dragPointIndex === 0) {
-            // Update point1 - modify existing structure
-            if (data._internal_point1) {
-                data._internal_point1._internal_time = currentTime;
-                data._internal_point1._internal_value = currentPrice;
+        console.log('Dragging point to new position:', { x: currentX, time: currentTime, price: currentPrice });
+        
+        try {
+            const data = trendline.data() as any;
+            
+            if (dragState.dragPointIndex === 0) {
+                if (data._internal_point1) {
+                    data._internal_point1._internal_time = currentTime;
+                    data._internal_point1._internal_value = currentPrice;
+                }
+            } else {
+                if (data._internal_point2) {
+                    data._internal_point2._internal_time = currentTime;
+                    data._internal_point2._internal_value = currentPrice;
+                }
+                if (data.point2) {
+                    data.point2.time = currentTime;
+                    data.point2.value = currentPrice;
+                }
             }
-        } else {
-            // Update point2 - modify existing structure
-            if (data._internal_point2) {
-                data._internal_point2._internal_time = currentTime;
-                data._internal_point2._internal_value = currentPrice;
-            }
-            if (data.point2) {
-                data.point2.time = currentTime;
-                data.point2.value = currentPrice;
-            }
+            
+            this._model().lightUpdate();
+            
+        } catch (error) {
+            console.error('Error updating trendline point:', error);
         }
         
-        console.log('Modified data:', data);
+    } else if (dragState.dragType === 'line') {
+        // Line dragging logic
+        if (!dragState.originalLine) {
+            return;
+        }
         
-        // Just trigger a redraw
-        this._model().lightUpdate();
+        // Calculate time and price offsets
+        const timeScale = this._model().timeScale() as any;
+        const priceScale = this._state?.defaultPriceScale();
+        const firstValue = priceScale?.firstValue();
+        if (!priceScale || firstValue === null || firstValue === undefined) {
+            return;
+        }
         
-    } catch (error) {
-        console.error('Error updating trendline:', error);
+        // Calculate time offset using the same extrapolation logic
+        const originalMouseTime = this._extrapolateTimeFromCoordinate(dragState.startMousePos.x, timeScale);
+        const newMouseTime = this._extrapolateTimeFromCoordinate(event.localX, timeScale);
+        const deltaTime = newMouseTime - originalMouseTime;
+        
+        // Calculate price offset
+        const originalMousePrice = (priceScale as any)._internal_coordinateToPrice(dragState.startMousePos.y as Coordinate, firstValue);
+        const newMousePrice = (priceScale as any)._internal_coordinateToPrice(event.localY as Coordinate, firstValue);
+        const deltaPrice = newMousePrice - originalMousePrice;
+        
+        console.log('Dragging line with offsets:', { deltaTime, deltaPrice });
+        
+        try {
+            const data = trendline.data() as any;
+            
+            // Move both points by the same offset
+            if (data._internal_point1) {
+                data._internal_point1._internal_time = dragState.originalLine.point1.time + deltaTime;
+                data._internal_point1._internal_value = dragState.originalLine.point1.value + deltaPrice;
+            }
+            
+            if (data._internal_point2) {
+                data._internal_point2._internal_time = dragState.originalLine.point2.time + deltaTime;
+                data._internal_point2._internal_value = dragState.originalLine.point2.value + deltaPrice;
+            }
+            
+            if (data.point2) {
+                data.point2.time = dragState.originalLine.point2.time + deltaTime;
+                data.point2.value = dragState.originalLine.point2.value + deltaPrice;
+            }
+            
+            this._model().lightUpdate();
+            
+        } catch (error) {
+            console.error('Error updating trendline position:', error);
+        }
     }
 }
 
