@@ -479,12 +479,205 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 	private readonly _horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>;
 
 	private _colorParser: ColorParser;
+
+	private _currentSymbol: string = '';
+	private _trendlinesBySymbol: Map<string, Map<string, Trendline>> = new Map();
+	private _fibonacciRetrracementsBySymbol: Map<string, Map<string, FibonacciRetracement>> = new Map();
+
 	private _trendlines: Map<string, Trendline> = new Map();
 	private _fibonacciRetracements: Map<string, FibonacciRetracement> = new Map();
 
 	private _isDrawingTrendline: boolean = false;
 	private _trendlineStartPoint: { x: number; y: number; time: number; price: number } | null = null;
 	private _trendlinePreviewEnd: { x: number; y: number; time: number; price: number } | null = null;
+
+	private _getCurrentSymbolTrendlines(): Map<string, Trendline> {
+    if (!this._currentSymbol) {
+        return this._trendlines; // fallback to global storage if no symbol set
+    }
+    
+    if (!this._trendlinesBySymbol.has(this._currentSymbol)) {
+        this._trendlinesBySymbol.set(this._currentSymbol, new Map());
+    }
+    
+    return this._trendlinesBySymbol.get(this._currentSymbol)!;
+}
+
+private _getCurrentSymbolFibonacci(): Map<string, FibonacciRetracement> {
+    if (!this._currentSymbol) {
+        return this._fibonacciRetracements; // fallback to global storage if no symbol set
+    }
+    
+    if (!this._fibonacciRetrracementsBySymbol.has(this._currentSymbol)) {
+        this._fibonacciRetrracementsBySymbol.set(this._currentSymbol, new Map());
+    }
+    
+    return this._fibonacciRetrracementsBySymbol.get(this._currentSymbol)!;
+}
+
+public setCurrentSymbol(symbol: string): void {
+    this._currentSymbol = symbol;
+    // Initialize storage for this symbol if it doesn't exist
+    if (!this._trendlinesBySymbol.has(symbol)) {
+        this._trendlinesBySymbol.set(symbol, new Map());
+    }
+    if (!this._fibonacciRetrracementsBySymbol.has(symbol)) {
+        this._fibonacciRetrracementsBySymbol.set(symbol, new Map());
+    }
+    this.fullUpdate();
+}
+
+private async _saveTrendlinesToStorage(): Promise<void> {
+    try {
+        const allTrendlines: { [symbol: string]: any } = {};
+        
+        this._trendlinesBySymbol.forEach((trendlines, symbol) => {
+            const symbolTrendlines: any = {};
+            trendlines.forEach((trendline, id) => {
+                symbolTrendlines[id] = {
+                    data: trendline.data(),
+                    options: trendline.options()
+                };
+            });
+            if (Object.keys(symbolTrendlines).length > 0) {
+                allTrendlines[symbol] = symbolTrendlines;
+            }
+        });
+        
+        // Use IndexedDB
+        const request = indexedDB.open('TradingChartDB', 1);
+        
+        request.onupgradeneeded = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            if (!db.objectStoreNames.contains('trendlines')) {
+                db.createObjectStore('trendlines');
+            }
+        };
+        
+        request.onsuccess = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+            const transaction = db.transaction(['trendlines'], 'readwrite');
+            const store = transaction.objectStore('trendlines');
+            store.put(allTrendlines, 'all_trendlines');
+            console.log('Saved trendlines to IndexedDB:', allTrendlines);
+        };
+        
+        request.onerror = (event) => {
+            console.error('Failed to save trendlines to IndexedDB:', event);
+        };
+    } catch (error) {
+        console.error('Failed to save trendlines:', error);
+    }
+}
+
+private async _loadTrendlinesFromStorage(): Promise<void> {
+    try {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('TradingChartDB', 1);
+            
+            request.onupgradeneeded = (event) => {
+                const db = (event.target as IDBOpenDBRequest).result;
+                if (!db.objectStoreNames.contains('trendlines')) {
+                    db.createObjectStore('trendlines');
+                }
+            };
+            
+            request.onsuccess = (event) => {
+                const db = (event.target as IDBOpenDBRequest).result;
+                const transaction = db.transaction(['trendlines'], 'readonly');
+                const store = transaction.objectStore('trendlines');
+                const getRequest = store.get('all_trendlines');
+                
+                getRequest.onsuccess = () => {
+                    const allTrendlines = getRequest.result;
+                    if (allTrendlines) {
+                        Object.keys(allTrendlines).forEach(symbol => {
+                            const symbolTrendlines = allTrendlines[symbol];
+                            const trendlineMap = new Map();
+                            
+                            Object.keys(symbolTrendlines).forEach(id => {
+                                const { data, options } = symbolTrendlines[id];
+                                const trendline = new Trendline(data, options);
+                                trendlineMap.set(id, trendline);
+                            });
+                            
+                            if (trendlineMap.size > 0) {
+                                this._trendlinesBySymbol.set(symbol, trendlineMap);
+                            }
+                        });
+                        
+                        console.log('Loaded trendlines from IndexedDB:', allTrendlines);
+                    }
+                    resolve();
+                };
+                
+                getRequest.onerror = () => {
+                    console.error('Failed to load trendlines from IndexedDB');
+                    resolve(); // Don't reject, just continue without data
+                };
+            };
+            
+            request.onerror = () => {
+                console.error('Failed to open IndexedDB');
+                resolve(); // Don't reject, just continue without data
+            };
+        });
+    } catch (error) {
+        console.error('Failed to load trendlines:', error);
+    }
+}
+
+private _saveFibonacciToStorage(): void {
+    try {
+        const allFibonacci: { [symbol: string]: any } = {};
+        
+        this._fibonacciRetrracementsBySymbol.forEach((fibonaccis, symbol) => {
+            const symbolFibonaccis: any = {};
+            fibonaccis.forEach((fibonacci, id) => {
+                symbolFibonaccis[id] = {
+                    data: fibonacci.data(),
+                    options: fibonacci.options()
+                };
+            });
+            if (Object.keys(symbolFibonaccis).length > 0) {
+                allFibonacci[symbol] = symbolFibonaccis;
+            }
+        });
+        
+        localStorage.setItem('trading_chart_fibonacci', JSON.stringify(allFibonacci));
+        console.log('Saved fibonacci retracements to localStorage');
+    } catch (error) {
+        console.error('Failed to save fibonacci retracements to localStorage:', error);
+    }
+}
+
+private _loadFibonacciFromStorage(): void {
+    try {
+        const stored = localStorage.getItem('trading_chart_fibonacci');
+        if (stored) {
+            const allFibonacci = JSON.parse(stored);
+            
+            Object.keys(allFibonacci).forEach(symbol => {
+                const symbolFibonaccis = allFibonacci[symbol];
+                const fibonacciMap = new Map();
+                
+                Object.keys(symbolFibonaccis).forEach(id => {
+                    const { data, options } = symbolFibonaccis[id];
+                    const fibonacci = new FibonacciRetracement(data, options);
+                    fibonacciMap.set(id, fibonacci);
+                });
+                
+                if (fibonacciMap.size > 0) {
+                    this._fibonacciRetrracementsBySymbol.set(symbol, fibonacciMap);
+                }
+            });
+            
+            console.log('Loaded fibonacci retracements from localStorage');
+        }
+    } catch (error) {
+        console.error('Failed to load fibonacci retracements from localStorage:', error);
+    }
+}
 
 	public constructor(invalidateHandler: InvalidateHandler, options: ChartOptionsInternal<HorzScaleItem>, horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>) {
 		this._invalidateHandler = invalidateHandler;
@@ -503,23 +696,30 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 
 		this._backgroundTopColor = this._getBackgroundColor(BackgroundColorSide.Top);
 		this._backgroundBottomColor = this._getBackgroundColor(BackgroundColorSide.Bottom);
+
+		this._loadTrendlinesFromStorage().then(() => {
+    		this.fullUpdate(); // Trigger a redraw after loading
+		});
+		this._loadFibonacciFromStorage();
 	}
 
 	public addTrendline(data: TrendlineData, options?: any): string {
     const trendline = new Trendline(data, options);
-    this._trendlines.set(data.id, trendline);
+    this._getCurrentSymbolTrendlines().set(data.id, trendline);
+    this._saveTrendlinesToStorage().catch(console.error);
     this.fullUpdate();
     return data.id;
 }
 
 public removeTrendline(id: string): void {
-    if (this._trendlines.delete(id)) {
+    if (this._getCurrentSymbolTrendlines().delete(id)) {
+        this._saveTrendlinesToStorage().catch(console.error);
         this.fullUpdate();
     }
 }
 
 public updateTrendline(id: string, data?: Partial<TrendlineData>, options?: any): void {
-    const trendline = this._trendlines.get(id);
+    const trendline = this._getCurrentSymbolTrendlines().get(id);
     if (trendline) {
         if (data) {
             trendline.updateData(data);
@@ -527,32 +727,35 @@ public updateTrendline(id: string, data?: Partial<TrendlineData>, options?: any)
         if (options) {
             trendline.updateOptions(options);
         }
+        this._saveTrendlinesToStorage().catch(console.error);
         this.fullUpdate();
     }
 }
 
 public trendlines(): Map<string, Trendline> {
-    return this._trendlines;
+    return this._getCurrentSymbolTrendlines();
 }
 
 public trendline(id: string): Trendline | undefined {
-    return this._trendlines.get(id);
+    return this._getCurrentSymbolTrendlines().get(id);
 }
 
 public addFibonacci(data: any, options?: any): string {
     const fibonacciRetracement = new FibonacciRetracement(data, options);
-    this._fibonacciRetracements.set(data.id, fibonacciRetracement);
+    this._getCurrentSymbolFibonacci().set(data.id, fibonacciRetracement);
+    this._saveFibonacciToStorage();
     this.fullUpdate();
     return data.id;
 }
 
 public removeFibonacci(id: string): void {
-    this._fibonacciRetracements.delete(id);
+    this._getCurrentSymbolFibonacci().delete(id);
+    this._saveFibonacciToStorage();
     this.fullUpdate();
 }
 
 public updateFibonacci(id: string, point1?: any, point2?: any, options?: any): void {
-    const fibonacci = this._fibonacciRetracements.get(id);
+    const fibonacci = this._getCurrentSymbolFibonacci().get(id);
     if (fibonacci) {
         if (point1 || point2) {
             fibonacci.updatePoints(point1, point2);
@@ -560,12 +763,13 @@ public updateFibonacci(id: string, point1?: any, point2?: any, options?: any): v
         if (options) {
             fibonacci.applyOptions(options);
         }
+        this._saveFibonacciToStorage();
         this.fullUpdate();
     }
 }
 
 public fibonacciRetracements(): Map<string, FibonacciRetracement> {
-    return this._fibonacciRetracements;
+    return this._getCurrentSymbolFibonacci();
 }
 
 	public fullUpdate(): void {

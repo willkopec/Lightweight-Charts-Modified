@@ -466,4 +466,8 @@ public updateFibonacci(id: string, x1?: number, y1?: number, x2?: number, y2?: n
     this._chartWidget.model().updateFibonacci(id, point1, point2, options);
 }
 
+public setCurrentSymbol(symbol: string): void {
+    this._chartWidget.model().setCurrentSymbol(symbol);
+}
+
 }
