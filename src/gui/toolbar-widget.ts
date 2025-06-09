@@ -3,6 +3,7 @@ import { IDestroyable } from '../helpers/idestroyable';
 export interface ToolbarCallbacks {
     onTrendlineToolToggle: (active: boolean) => void;
     onFibonacciToolToggle: (active: boolean) => void;
+    onIndicatorAdd: (indicatorType: string) => void;
 }
 
 export class ToolbarWidget implements IDestroyable {
@@ -10,8 +11,11 @@ export class ToolbarWidget implements IDestroyable {
     private _callbacks: ToolbarCallbacks;
     private _trendlineButton: HTMLButtonElement | null = null;
     private _fibonacciButton: HTMLButtonElement | null = null;
+    private _indicatorButton: HTMLButtonElement | null = null;
+    private _indicatorDropdown: HTMLDivElement | null = null;
     private _isTrendlineActive: boolean = false;
     private _isFibonacciActive: boolean = false;
+    private _isDropdownOpen: boolean = false;
 
     public constructor(callbacks: ToolbarCallbacks) {
         this._callbacks = callbacks;
@@ -32,6 +36,10 @@ export class ToolbarWidget implements IDestroyable {
 
         this._createTrendlineButton();
         this._createFibonacciButton();
+        this._createIndicatorButton();
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', this._handleDocumentClick.bind(this));
     }
 
     public getElement(): HTMLDivElement {
@@ -39,6 +47,8 @@ export class ToolbarWidget implements IDestroyable {
     }
 
     public destroy(): void {
+        document.removeEventListener('click', this._handleDocumentClick.bind(this));
+        
         if (this._element.parentElement !== null) {
             this._element.parentElement.removeChild(this._element);
         }
@@ -85,6 +95,9 @@ export class ToolbarWidget implements IDestroyable {
                 this._updateFibonacciButtonState();
                 this._callbacks.onFibonacciToolToggle(false);
             }
+            
+            // Close indicator dropdown if open
+            this._closeDropdown();
             
             this._isTrendlineActive = !this._isTrendlineActive;
             this._updateTrendlineButtonState();
@@ -141,6 +154,9 @@ export class ToolbarWidget implements IDestroyable {
                 this._callbacks.onTrendlineToolToggle(false);
             }
             
+            // Close indicator dropdown if open
+            this._closeDropdown();
+            
             this._isFibonacciActive = !this._isFibonacciActive;
             this._updateFibonacciButtonState();
             this._callbacks.onFibonacciToolToggle(this._isFibonacciActive);
@@ -158,6 +174,170 @@ export class ToolbarWidget implements IDestroyable {
         });
 
         this._element.appendChild(button);
+    }
+
+    private _createIndicatorButton(): void {
+        const container = document.createElement('div');
+        container.style.position = 'relative';
+        container.style.display = 'inline-block';
+
+        const button = document.createElement('button');
+        this._indicatorButton = button;
+        
+        button.style.width = '32px';
+        button.style.height = '32px';
+        button.style.border = 'none';
+        button.style.backgroundColor = 'transparent';
+        button.style.borderRadius = '4px';
+        button.style.cursor = 'pointer';
+        button.style.display = 'flex';
+        button.style.alignItems = 'center';
+        button.style.justifyContent = 'center';
+        button.style.color = '#B2B5BE';
+        button.title = 'Add Indicator';
+
+        // Indicator icon (chart with line going through it)
+        button.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="3" width="14" height="10" fill="none" stroke="currentColor" stroke-width="1"/>
+                <path d="M3 11 L6 8 L9 9 L13 5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                <circle cx="6" cy="8" r="1" fill="currentColor"/>
+                <circle cx="9" cy="9" r="1" fill="currentColor"/>
+                <text x="8" y="2" font-size="8" text-anchor="middle" fill="currentColor">+</text>
+            </svg>
+        `;
+
+        // Click handler
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            
+            // Deactivate other tools if active
+            if (this._isTrendlineActive) {
+                this._isTrendlineActive = false;
+                this._updateTrendlineButtonState();
+                this._callbacks.onTrendlineToolToggle(false);
+            }
+            
+            if (this._isFibonacciActive) {
+                this._isFibonacciActive = false;
+                this._updateFibonacciButtonState();
+                this._callbacks.onFibonacciToolToggle(false);
+            }
+            
+            this._toggleDropdown();
+        });
+
+        // Hover effect
+        button.addEventListener('mouseenter', () => {
+            if (!this._isDropdownOpen) {
+                button.style.backgroundColor = '#2A2E39';
+            }
+        });
+        
+        button.addEventListener('mouseleave', () => {
+            if (!this._isDropdownOpen) {
+                button.style.backgroundColor = 'transparent';
+            }
+        });
+
+        container.appendChild(button);
+        this._createIndicatorDropdown(container);
+        this._element.appendChild(container);
+    }
+
+    private _createIndicatorDropdown(container: HTMLElement): void {
+        const dropdown = document.createElement('div');
+        this._indicatorDropdown = dropdown;
+        
+        dropdown.style.position = 'absolute';
+        dropdown.style.top = '36px';
+        dropdown.style.left = '0';
+        dropdown.style.backgroundColor = '#131722';
+        dropdown.style.border = '1px solid #2A2E39';
+        dropdown.style.borderRadius = '4px';
+        dropdown.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.4)';
+        dropdown.style.minWidth = '120px';
+        dropdown.style.display = 'none';
+        dropdown.style.zIndex = '20';
+
+        // Create RSI option
+        const rsiOption = this._createDropdownOption('RSI', 'Relative Strength Index');
+        rsiOption.addEventListener('click', () => {
+            this._callbacks.onIndicatorAdd('RSI');
+            this._closeDropdown();
+        });
+
+        dropdown.appendChild(rsiOption);
+        container.appendChild(dropdown);
+    }
+
+    private _createDropdownOption(label: string, description: string): HTMLElement {
+        const option = document.createElement('div');
+        option.style.padding = '8px 12px';
+        option.style.cursor = 'pointer';
+        option.style.color = '#B2B5BE';
+        option.style.fontSize = '12px';
+        option.style.borderBottom = '1px solid #2A2E39';
+
+        const labelDiv = document.createElement('div');
+        labelDiv.textContent = label;
+        labelDiv.style.fontWeight = 'bold';
+        labelDiv.style.marginBottom = '2px';
+
+        const descDiv = document.createElement('div');
+        descDiv.textContent = description;
+        descDiv.style.fontSize = '10px';
+        descDiv.style.color = '#848E9C';
+
+        option.appendChild(labelDiv);
+        option.appendChild(descDiv);
+
+        // Hover effect
+        option.addEventListener('mouseenter', () => {
+            option.style.backgroundColor = '#2A2E39';
+        });
+
+        option.addEventListener('mouseleave', () => {
+            option.style.backgroundColor = 'transparent';
+        });
+
+        return option;
+    }
+
+    private _toggleDropdown(): void {
+        if (this._isDropdownOpen) {
+            this._closeDropdown();
+        } else {
+            this._openDropdown();
+        }
+    }
+
+    private _openDropdown(): void {
+        if (this._indicatorDropdown) {
+            this._indicatorDropdown.style.display = 'block';
+            this._isDropdownOpen = true;
+            
+            if (this._indicatorButton) {
+                this._indicatorButton.style.backgroundColor = '#2A2E39';
+            }
+        }
+    }
+
+    private _closeDropdown(): void {
+        if (this._indicatorDropdown) {
+            this._indicatorDropdown.style.display = 'none';
+            this._isDropdownOpen = false;
+            
+            if (this._indicatorButton) {
+                this._indicatorButton.style.backgroundColor = 'transparent';
+            }
+        }
+    }
+
+    private _handleDocumentClick(event: Event): void {
+        if (this._isDropdownOpen && !this._element.contains(event.target as Node)) {
+            this._closeDropdown();
+        }
     }
 
     private _updateTrendlineButtonState(): void {

@@ -34,6 +34,8 @@ import { TouchMouseEventData } from './touch-mouse-event-data';
 import { Trendline } from './trendline';
 import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
+import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
+import { SeriesOptionsMap } from './series-options';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -448,6 +450,11 @@ export interface IChartModelBase {
 	setTrendlinePreviewEnd(point: { x: number; y: number; time: number; price: number } | null): void;
 	getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null;
 
+	// Add indicator methods
+	addRSIIndicator(): string;
+	removeIndicator(id: string): boolean;
+	updateIndicators(): void;
+	getIndicators(): IndicatorPane[];
 }
 
 function isPanePrimitive(source: IPriceDataSource | IPrimitiveHitTestSource): source is IPrimitiveHitTestSource | Pane {
@@ -490,6 +497,9 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 	private _isDrawingTrendline: boolean = false;
 	private _trendlineStartPoint: { x: number; y: number; time: number; price: number } | null = null;
 	private _trendlinePreviewEnd: { x: number; y: number; time: number; price: number } | null = null;
+
+	// Add indicator manager
+	private _indicatorManager: IndicatorManager;
 
 	private _getCurrentSymbolTrendlines(): Map<string, Trendline> {
     if (!this._currentSymbol) {
@@ -696,6 +706,14 @@ private _loadFibonacciFromStorage(): void {
 
 		this._backgroundTopColor = this._getBackgroundColor(BackgroundColorSide.Top);
 		this._backgroundBottomColor = this._getBackgroundColor(BackgroundColorSide.Bottom);
+
+		// Initialize indicator manager
+		const indicatorCallbacks: IndicatorManagerCallbacks = {
+			onIndicatorAdded: this._onIndicatorAdded.bind(this),
+			onIndicatorRemoved: this._onIndicatorRemoved.bind(this),
+			onIndicatorUpdated: this._onIndicatorUpdated.bind(this),
+		};
+		this._indicatorManager = new IndicatorManager(indicatorCallbacks);
 
 		this._loadTrendlinesFromStorage().then(() => {
     		this.fullUpdate(); // Trigger a redraw after loading
@@ -1366,6 +1384,268 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 		return this._colorParser;
 	}
 
+	// Indicator methods
+	public addRSIIndicator(): string {
+		// Get the main series data for RSI calculation
+		const mainSeries = this._serieses[0]; // Assume first series is the main price series
+		if (!mainSeries) {
+			throw new Error('No main series available for indicator calculation');
+		}
+
+		// Convert series data to price data format
+		const priceData = IndicatorManager.seriesToPriceData(mainSeries);
+
+		// Create callbacks for pane and series creation
+		const createPaneCallback = () => {
+			// Create a new pane specifically for this indicator
+			const paneIndex = this._panes.length;
+			const newPane = this._getOrCreatePane(paneIndex);
+			
+			// Set a smaller height for indicator panes
+			newPane.setStretchFactor(0.3); // Much smaller than main chart
+			
+			return newPane;
+		};
+
+		const createSeriesCallback = (pane: Pane, type: 'Line') => {
+			// Create line series options for RSI (with all required Line series properties)
+			const seriesOptions: SeriesOptionsMap['Line'] = {
+				title: 'RSI(14)',
+				color: '#FF6B35',
+				lineWidth: 1,
+				lineStyle: 0, // Solid line
+				lineType: 0, // Simple line
+				lineVisible: true,
+				pointMarkersVisible: false,
+				lastPriceAnimation: 0, // No animation
+				priceFormat: {
+					type: 'custom',
+					formatter: (price: number) => price.toFixed(2),
+					minMove: 0.01, // Required for custom price format
+				},
+				priceScaleId: 'rsi',
+				visible: true,
+				crosshairMarkerVisible: true,
+				crosshairMarkerRadius: 3,
+				crosshairMarkerBorderColor: '',
+				crosshairMarkerBorderWidth: 0,
+				crosshairMarkerBackgroundColor: '',
+				lastValueVisible: true,
+				priceLineVisible: true,
+				priceLineSource: 0, // Last bar price line source
+				priceLineColor: '',
+				priceLineWidth: 1,
+				priceLineStyle: 0,
+				baseLineVisible: true,
+				baseLineColor: '#B2B5BE',
+				baseLineWidth: 1,
+				baseLineStyle: 0,
+				autoscaleInfoProvider: undefined,
+			};
+
+			// Create the pane view function
+			const createPaneView = (series: any, model: any) => {
+				// Import the line pane view - we need to use the actual lightweight charts line view
+				// For now, return a basic implementation that will show something
+				return {
+					update: (updateType?: string) => {
+						console.log('RSI pane view update:', updateType);
+					},
+					renderer: (pane: any) => {
+						return {
+							draw: (target: any, isHovered: boolean, hitTestData?: unknown) => {
+								// Get the RSI data from the series
+								const seriesData = (series as any)._data;
+								if (!seriesData || seriesData.isEmpty()) {
+									return;
+								}
+
+								// Draw a simple line using canvas
+								target.useBitmapCoordinateSpace((scope: any) => {
+									const ctx = scope.context;
+									const timeScale = model.timeScale();
+									const priceScale = pane.priceScaleById('rsi');
+									
+									if (!priceScale) return;
+
+									const firstValue = priceScale.firstValue();
+									if (firstValue === null) return;
+
+									ctx.strokeStyle = '#FF6B35'; // Orange color for RSI
+									ctx.lineWidth = 2;
+									ctx.beginPath();
+
+									let firstPoint = true;
+									const visibleRange = timeScale.visibleStrictRange();
+									
+									if (visibleRange) {
+										for (let i = Math.floor(visibleRange.left()); i <= Math.ceil(visibleRange.right()); i++) {
+											const data = seriesData.valueAt(i);
+											if (data) {
+												const x = timeScale.indexToCoordinate(i);
+												const y = priceScale.priceToCoordinate(data.value[3], firstValue.value); // Close price index
+												
+												if (x !== null && y !== null) {
+													const pixelX = x * scope.horizontalPixelRatio;
+													const pixelY = y * scope.verticalPixelRatio;
+													
+													if (firstPoint) {
+														ctx.moveTo(pixelX, pixelY);
+														firstPoint = false;
+													} else {
+														ctx.lineTo(pixelX, pixelY);
+													}
+												}
+											}
+										}
+									}
+									
+									ctx.stroke();
+								});
+							}
+						};
+					},
+					zOrder: () => 0,
+					visible: () => true,
+				};
+			};
+
+			// Create the series
+			const series = new Series(
+				this, // model
+				'Line', // seriesType (passed as separate parameter)
+				seriesOptions, // options (without 'type' property)
+				createPaneView // createPaneView function
+			);
+
+			// Add the series to the pane
+			pane.addDataSource(series, 'rsi');
+			this._serieses.push(series);
+
+			return series as Series<'Line'>;
+		};
+
+		// Add the RSI indicator
+		const indicatorId = this._indicatorManager.addRSI(
+			priceData,
+			createPaneCallback,
+			createSeriesCallback
+		);
+
+		// Update the chart
+		this.fullUpdate();
+
+		return indicatorId;
+	}
+
+	public removeIndicator(id: string): boolean {
+		const indicator = this._indicatorManager.getIndicator(id);
+		if (!indicator) {
+			return false;
+		}
+
+		// Remove the series from our tracking
+		const seriesIndex = this._serieses.indexOf(indicator.series);
+		if (seriesIndex !== -1) {
+			this._serieses.splice(seriesIndex, 1);
+		}
+
+		// Remove the pane if it's empty after removing the series
+		const paneIndex = this._panes.indexOf(indicator.pane);
+		if (paneIndex !== -1) {
+			indicator.pane.removeDataSource(indicator.series);
+			
+			// If pane is now empty, remove it
+			if (indicator.pane.dataSources().length === 0) {
+				this.removePane(paneIndex);
+			}
+		}
+
+		// Remove from indicator manager
+		const success = this._indicatorManager.removeIndicator(id);
+		
+		if (success) {
+			this.fullUpdate();
+		}
+
+		return success;
+	}
+
+	public updateIndicators(): void {
+		// Get the main series data
+		const mainSeries = this._serieses[0];
+		if (!mainSeries) {
+			return;
+		}
+
+		const priceData = IndicatorManager.seriesToPriceData(mainSeries);
+
+		// Update all indicators
+		for (const indicator of this._indicatorManager.getAllIndicators()) {
+			this._indicatorManager.updateIndicator(indicator.id, priceData);
+		}
+	}
+
+	public getIndicators(): IndicatorPane[] {
+		return this._indicatorManager.getAllIndicators();
+	}
+
+	// Callback methods for indicator manager
+	private _onIndicatorAdded(indicatorPane: IndicatorPane): void {
+		console.log('Indicator added:', indicatorPane.id);
+		
+		// Configure the indicator pane for proper display
+		this._configureIndicatorPane(indicatorPane);
+	}
+
+	private _onIndicatorRemoved(indicatorId: string): void {
+		console.log('Indicator removed:', indicatorId);
+	}
+
+	private _onIndicatorUpdated(indicatorId: string): void {
+		// Light update when indicator data changes
+		this.lightUpdate();
+	}
+
+	private _configureIndicatorPane(indicatorPane: IndicatorPane): void {
+		const pane = indicatorPane.pane;
+		
+		if (indicatorPane.type === 'RSI') {
+			// Set up RSI-specific price scale configuration
+			const priceScale = pane.priceScaleById('rsi');
+			if (priceScale) {
+				priceScale.applyOptions({
+					autoScale: false,
+					scaleMargins: {
+						top: 0.1,
+						bottom: 0.1,
+					},
+					mode: 0, // Normal mode
+					visible: true,
+					borderVisible: true,
+					textColor: '#B2B5BE',
+					ticksVisible: true,
+					entireTextOnly: false,
+				});
+
+				// Set fixed range for RSI (0-100) - using applyOptions instead
+				priceScale.applyOptions({
+					autoScale: false,
+					// Note: We can't set a fixed range directly, but autoScale: false 
+					// with proper margins should work for RSI display
+				});
+			}
+
+			// Add horizontal lines for overbought/oversold levels
+			const rsi = indicatorPane.indicator;
+			const levels = rsi.getLevels();
+			
+			// We could add horizontal line primitives here for the 70/30 levels
+			// This would require implementing horizontal line primitives
+			console.log('RSI levels:', levels);
+		}
+	}
+
 	private _getOrCreatePane(index: number): Pane {
 		assert(index >= 0, 'Index should be greater or equal to 0');
 		index = Math.min(this._panes.length, index);
@@ -1451,32 +1731,30 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 	}
 
 	public setTrendlineDrawingState(isDrawing: boolean): void {
-    this._isDrawingTrendline = isDrawing;
-    if (!isDrawing) {
-        this._trendlineStartPoint = null;
-        this._trendlinePreviewEnd = null;
-    }
-}
+		this._isDrawingTrendline = isDrawing;
+		if (!isDrawing) {
+			this._trendlineStartPoint = null;
+			this._trendlinePreviewEnd = null;
+		}
+	}
 
-public isDrawingTrendline(): boolean {
-    return this._isDrawingTrendline;
-}
+	public isDrawingTrendline(): boolean {
+		return this._isDrawingTrendline;
+	}
 
-public setTrendlineStartPoint(point: { x: number; y: number; time: number; price: number } | null): void {
-    this._trendlineStartPoint = point;
-}
+	public setTrendlineStartPoint(point: { x: number; y: number; time: number; price: number } | null): void {
+		this._trendlineStartPoint = point;
+	}
 
-public getTrendlineStartPoint(): { x: number; y: number; time: number; price: number } | null {
-    return this._trendlineStartPoint;
-}
+	public getTrendlineStartPoint(): { x: number; y: number; time: number; price: number } | null {
+		return this._trendlineStartPoint;
+	}
 
-public setTrendlinePreviewEnd(point: { x: number; y: number; time: number; price: number } | null): void {
-    this._trendlinePreviewEnd = point;
-}
+	public setTrendlinePreviewEnd(point: { x: number; y: number; time: number; price: number } | null): void {
+		this._trendlinePreviewEnd = point;
+	}
 
-public getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null {
-    return this._trendlinePreviewEnd;
-
-}
-
+	public getTrendlinePreviewEnd(): { x: number; y: number; time: number; price: number } | null {
+		return this._trendlinePreviewEnd;
+	}
 }

@@ -144,9 +144,10 @@ export class ChartWidget<HorzScaleItem> implements IDestroyable, IChartWidgetBas
 		container.appendChild(this._element);
 		// Create and add toolbar with callbacks
 		const toolbarCallbacks: ToolbarCallbacks = {
-    		onTrendlineToolToggle: this._onTrendlineToolToggle.bind(this),
-    		onFibonacciToolToggle: this._onFibonacciToolToggle.bind(this)
-		};
+    onTrendlineToolToggle: this._onTrendlineToolToggle.bind(this),
+    onFibonacciToolToggle: this._onFibonacciToolToggle.bind(this),
+    onIndicatorAdd: this._onIndicatorAdd.bind(this) // Add this line
+};
 		this._toolbarWidget = new ToolbarWidget(toolbarCallbacks);
 		this._element.appendChild(this._toolbarWidget.getElement());
 		this._updateTimeAxisVisibility();
@@ -538,6 +539,42 @@ private _onFibonacciToolToggle(active: boolean): void {
             });
             this._originalCrosshairMode = null;
         }
+    }
+}
+
+// Add this new method after the existing _onFibonacciToolToggle method (around line 250):
+private _onIndicatorAdd(indicatorType: string): void {
+    console.log('Adding indicator:', indicatorType);
+    
+    switch (indicatorType) {
+        case 'RSI':
+            this._addRSIIndicator();
+            break;
+        default:
+            console.warn('Unknown indicator type:', indicatorType);
+    }
+}
+
+private _addRSIIndicator(): void {
+    console.log('Adding RSI indicator...');
+    
+    try {
+        // Check if we have at least one series to calculate indicators from
+        const series = this._model.serieses();
+        if (series.length === 0) {
+            console.warn('No series available for RSI calculation');
+            return;
+        }
+
+        // Add RSI indicator through the model
+        const indicatorId = this._model.addRSIIndicator();
+        console.log('RSI indicator added with ID:', indicatorId);
+        
+        // The model will handle creating the pane, series, and calculations
+        // Chart will automatically update through the fullUpdate() call in the model
+        
+    } catch (error) {
+        console.error('Failed to add RSI indicator:', error);
     }
 }
 
