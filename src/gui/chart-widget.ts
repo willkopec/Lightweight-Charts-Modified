@@ -559,19 +559,9 @@ private _addRSIIndicator(): void {
     console.log('Adding RSI indicator...');
     
     try {
-        // Check if we have at least one series to calculate indicators from
-        const series = this._model.serieses();
-        if (series.length === 0) {
-            console.warn('No series available for RSI calculation');
-            return;
-        }
-
-        // Add RSI indicator through the model
+        // Add RSI indicator through the model's method
         const indicatorId = this._model.addRSIIndicator();
         console.log('RSI indicator added with ID:', indicatorId);
-        
-        // The model will handle creating the pane, series, and calculations
-        // Chart will automatically update through the fullUpdate() call in the model
         
     } catch (error) {
         console.error('Failed to add RSI indicator:', error);
