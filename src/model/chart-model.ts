@@ -35,6 +35,7 @@ import { Trendline } from './trendline';
 import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
 import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
+import { RSIIndicator } from '../indicators/rsi';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -1384,186 +1385,50 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 	}
 
 	// Indicator methods
-	public addRSIIndicator(): string {
-    // Get the main series data for RSI calculation
-    const mainSeries = this._serieses[0]; // Assume first series is the main price series
-    if (!mainSeries) {
-        throw new Error('No main series available for indicator calculation');
+	// In src/model/chart-model.ts, replace the entire addRSIIndicator method with this:
+
+public addRSIIndicator(): string {
+    try {
+        // Get main series data
+        const mainSeries = this._serieses[0];
+        const priceData = IndicatorManager.seriesToPriceData(mainSeries);
+        
+        // Calculate RSI
+        const rsi = new RSIIndicator();
+        const rsiData = rsi.calculate(priceData);
+        
+        // Create new pane
+        const newPane = this._getOrCreatePane(this._panes.length);
+        newPane.setStretchFactor(0.3);
+        
+        // Copy exact options from main series and modify
+        const mainOptions = mainSeries.options();
+        const rsiOptions = JSON.parse(JSON.stringify(mainOptions));
+        rsiOptions.color = '#FF6B35';
+        rsiOptions.title = 'RSI(14)';
+        
+        // Create series
+        const rsiSeries = new Series(this, 'Line', rsiOptions, (series: any) => ({
+            update: () => {},
+            renderer: () => ({ draw: () => {} }),
+            visible: () => true,
+            zOrder: () => 0
+        })) as any;
+        
+        // Add to pane FIRST, then set data
+        this._addSeriesToPane(rsiSeries, newPane);
+        this._serieses.push(rsiSeries);
+        
+        // Set data using internal method
+        const seriesData = rsiData.map((p: any) => ({ time: p.time, value: p.value }));
+        (rsiSeries as any)._internal_setData(seriesData, true);
+        this.fullUpdate();
+        
+        return 'RSI_' + Date.now();
+    } catch (e) {
+        console.error('RSI creation failed:', e);
+        throw e;
     }
-
-    // Convert series data to price data format
-    const priceData = IndicatorManager.seriesToPriceData(mainSeries);
-
-    // Create callbacks for pane and series creation
-    const createPaneCallback = () => {
-        // Create a new pane specifically for this indicator
-        const paneIndex = this._panes.length;
-        const newPane = this._getOrCreatePane(paneIndex);
-        
-        // Set a reasonable height for indicator panes (was 0.3, now 1.0)
-        newPane.setStretchFactor(1.0); // Same as main chart for now
-        
-        return newPane;
-    };
-
-    const createSeriesCallback = (pane: Pane, type: 'Line') => {
-        console.log('Creating RSI series with complete options');
-
-        // Create complete series options based on existing working series
-        const workingSeries = this._serieses[0]; // Get the main series that works
-        const workingOptions = workingSeries ? workingSeries.options() : null;
-        
-        console.log('Working series options:', workingOptions);
-        console.log('Working series type:', typeof workingOptions);
-        
-        // Use copied options but override what we need for RSI
-        const seriesOptions = workingOptions ? {
-            ...workingOptions,
-            title: 'RSI(14)',
-            color: '#FF6B35',
-            priceScaleId: 'rsi',
-        } : {
-            // Fallback complete options
-            color: '#FF6B35',
-            title: 'RSI(14)',
-            priceScaleId: 'rsi',
-            priceFormat: {
-                type: 'price' as const,
-                precision: 2,
-                minMove: 0.01,
-            },
-            visible: true,
-            lastValueVisible: true,
-            priceLineVisible: false,
-            priceLineSource: 0 as const,
-            autoscaleInfoProvider: undefined,
-        };
-        
-        console.log('Using copied options:', seriesOptions);
-
-        // Create the series using complete options
-        const series = new Series(
-            this, // model
-            'Line' as const, // seriesType
-            seriesOptions as any,
-            // Use a proper line series pane view that actually renders
-            (series: any, model: any) => {
-                return {
-                    update: () => {
-                        console.log('RSI pane view update called');
-                    },
-                    renderer: (pane: any) => {
-                        return {
-                            draw: (target: any, isHovered: boolean, hitTestData?: unknown) => {
-                                console.log('RSI renderer draw called');
-                                
-                                // Access the series data using the proper method
-                                let seriesData = null;
-                                
-                                // Try the standard bars() method that all series should have
-                                try {
-                                    if (series && typeof series.bars === 'function') {
-                                        seriesData = series.bars();
-                                        console.log('Got data from series.bars()');
-                                    } else {
-                                        console.log('series.bars is not a function, series:', series);
-                                    }
-                                } catch (e) {
-                                    console.log('Error calling series.bars():', e);
-                                }
-                                
-                                if (!seriesData || (seriesData.isEmpty && seriesData.isEmpty())) {
-                                    console.log('No RSI data available in series');
-                                    // Log series properties to debug
-                                    console.log('Series object keys:', Object.keys(series || {}));
-                                    console.log('Series _data property:', (series as any)._data);
-                                    return;
-                                }
-                                
-                                const indices = seriesData.indices();
-                                console.log('RSI data indices:', indices ? indices.length : 'no indices');
-                                
-                                if (!indices || indices.length < 2) {
-                                    console.log('Not enough RSI data points to draw');
-                                    return;
-                                }
-                                
-                                // Use the target to draw a simple line
-                                target.useMediaCoordinateSpace((scope: any) => {
-                                    const ctx = scope.context;
-                                    
-                                    console.log('Drawing RSI line with', indices.length, 'points');
-                                    
-                                    ctx.strokeStyle = '#FF6B35';
-                                    ctx.lineWidth = 2;
-                                    ctx.beginPath();
-                                    
-                                    let firstPoint = true;
-                                    let pointsDrawn = 0;
-                                    
-                                    for (const index of indices.slice(0, 10)) { // Limit to first 10 for debugging
-                                        const bar = seriesData.valueAt(index);
-                                        console.log('Bar at index', index, ':', bar);
-                                        
-                                        if (bar && bar.value) {
-                                            const timeScale = this.timeScale();
-                                            const priceScale = pane.defaultPriceScale();
-                                            const firstValue = priceScale.firstValue();
-                                            
-                                            if (firstValue) {
-                                                const x = timeScale.indexToCoordinate(index);
-                                                const rsiValue = Array.isArray(bar.value) ? bar.value[0] : bar.value;
-                                                const y = priceScale.priceToCoordinate(rsiValue, firstValue.value);
-                                                
-                                                console.log('Point', pointsDrawn, ': x=', x, 'y=', y, 'rsiValue=', rsiValue);
-                                                
-                                                if (x !== null && y !== null && !isNaN(x) && !isNaN(y)) {
-                                                    if (firstPoint) {
-                                                        ctx.moveTo(x, y);
-                                                        firstPoint = false;
-                                                    } else {
-                                                        ctx.lineTo(x, y);
-                                                    }
-                                                    pointsDrawn++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    if (pointsDrawn > 1) {
-                                        ctx.stroke();
-                                        console.log('RSI line drawn successfully with', pointsDrawn, 'points');
-                                    } else {
-                                        console.log('Not enough valid points to draw line');
-                                    }
-                                });
-                            }
-                        };
-                    },
-                    zOrder: () => 0,
-                    visible: () => true,
-                };
-            }
-        );
-
-        // Add the series to the pane
-        this.addSeriesToPane(series, this._panes.indexOf(pane));
-
-        console.log('RSI series created and added to pane');
-        return series as Series<'Line'>;
-    };
-
-    // Add the RSI indicator
-    const indicatorId = this._indicatorManager.addRSI(
-        priceData,
-        createPaneCallback,
-        createSeriesCallback
-    );
-
-    // Force a full update to ensure proper rendering
-    this.fullUpdate();
-
-    return indicatorId;
 }
 
 	public removeIndicator(id: string): boolean {
