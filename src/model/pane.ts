@@ -50,20 +50,27 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	private _primitives: PanePrimitiveWrapper[] = [];
 
 	public constructor(timeScale: ITimeScale, model: IChartModelBase) {
-		this._timeScale = timeScale;
-		this._model = model;
-		this._grid = new Grid(this);
+    this._timeScale = timeScale;
+    this._model = model;
+    this._grid = new Grid(this);
 
-		const options = model.options();
+    const options = model.options();
 
-		this._leftPriceScale = this._createPriceScale(DefaultPriceScaleId.Left, options.leftPriceScale);
-		this._rightPriceScale = this._createPriceScale(DefaultPriceScaleId.Right, options.rightPriceScale);
+    this._leftPriceScale = this._createPriceScale(DefaultPriceScaleId.Left, options.leftPriceScale);
+    this._rightPriceScale = this._createPriceScale(DefaultPriceScaleId.Right, options.rightPriceScale);
 
-		this._leftPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._leftPriceScale), this);
-		this._rightPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._rightPriceScale), this);
+    this._leftPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._leftPriceScale), this);
+    this._rightPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._rightPriceScale), this);
 
-		this.applyScaleOptions(options);
-	}
+    // Force right price scale to be visible for indicator panes (non-main panes)
+    const panes = model.panes();
+    if (panes.length > 0) { // This means we're creating a new pane (not the first one)
+        const rightScaleOptions = { ...options.rightPriceScale, visible: true };
+        this._rightPriceScale = this._createPriceScale(DefaultPriceScaleId.Right, rightScaleOptions);
+    }
+
+    this.applyScaleOptions(options);
+}
 
 	public applyScaleOptions(options: DeepPartial<ChartOptionsBase>): void {
 		if (options.leftPriceScale) {
@@ -189,12 +196,30 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	public addDataSource(source: IPriceDataSource, targetScaleId: string, keepSourcesOrder?: boolean): void {
-		this._insertDataSource(
-			source,
-			targetScaleId,
-			keepSourcesOrder ? source.zorder() : this._dataSources.length
-		);
-	}
+    this._insertDataSource(
+        source,
+        targetScaleId,
+        keepSourcesOrder ? source.zorder() : this._dataSources.length
+    );
+    
+    // Force price scale to recalculate and show labels for indicator panes
+    const priceScale = this.priceScaleById(targetScaleId);
+    if (priceScale && targetScaleId === DefaultPriceScaleId.Right) {
+        // Ensure the price scale knows it has data sources and should be visible
+        priceScale.applyOptions({
+            visible: true,
+            ticksVisible: true,
+            borderVisible: true,
+            autoScale: true,
+        });
+        
+        // Force the price scale to recalculate
+        this.recalculatePriceScale(priceScale);
+        
+        // Update all views to ensure the price axis renders
+        this.updateAllSources();
+    }
+}
 
 	public removeDataSource(source: IPriceDataSource, keepSourceOrder?: boolean): void {
 		const index = this._dataSources.indexOf(source);
@@ -229,15 +254,18 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	public priceScalePosition(priceScale: PriceScale): PriceScalePosition {
-		if (priceScale === this._leftPriceScale) {
-			return 'left';
-		}
-		if (priceScale === this._rightPriceScale) {
-			return 'right';
-		}
+    if (priceScale === this._leftPriceScale) {
+        return 'left';
+    }
+    if (priceScale === this._rightPriceScale) {
+        return 'right';
+    }
 
-		return 'overlay';
-	}
+    // For overlay price scales on indicator panes, default to 'right' position
+    // This ensures they get rendered on the right side
+    return 'right';
+}
+
 
 	public leftPriceScale(): PriceScale {
 		return this._leftPriceScale;
@@ -300,23 +328,51 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	public defaultVisiblePriceScale(): PriceScale | null {
-		let priceScale: PriceScale | null = null;
+    // For indicator panes (non-main panes), prefer right scale or any overlay scale
+    if (this._dataSources.length > 0) {
+        // If we have overlay scales, use the first one
+        const overlayScales = Array.from(this._overlaySourcesByScaleId.values());
+        if (overlayScales.length > 0) {
+            const firstOverlaySource = overlayScales[0][0];
+            return firstOverlaySource.priceScale();
+        }
+        
+        // Otherwise use right scale if it has data
+        if (this._rightPriceScale.dataSources().length > 0) {
+            return this._rightPriceScale;
+        }
+    }
+    
+    // Fallback to the existing logic
+    let priceScale: PriceScale | null = null;
 
-		if (this._model.options().rightPriceScale.visible) {
-			priceScale = this._rightPriceScale;
-		} else if (this._model.options().leftPriceScale.visible) {
-			priceScale = this._leftPriceScale;
-		}
-		return priceScale;
-	}
+    if (this._model.options().rightPriceScale.visible) {
+        priceScale = this._rightPriceScale;
+    } else if (this._model.options().leftPriceScale.visible) {
+        priceScale = this._leftPriceScale;
+    }
+    return priceScale;
+}
 
 	public recalculatePriceScale(priceScale: PriceScale | null): void {
-		if (priceScale === null || !priceScale.isAutoScale()) {
-			return;
-		}
+    if (priceScale === null || !priceScale.isAutoScale()) {
+        return;
+    }
 
-		this._recalculatePriceScaleImpl(priceScale);
-	}
+    this._recalculatePriceScaleImpl(priceScale);
+    
+    // Special handling for indicator panes - force marks generation
+    if (priceScale === this._rightPriceScale && this._dataSources.length > 0) {
+        // Force the price scale to generate marks even if it thinks it's empty
+        const visibleBars = this._timeScale.visibleStrictRange();
+        if (visibleBars !== null) {
+            priceScale.recalculatePriceRange(visibleBars);
+            // Force marks calculation
+            priceScale.marks();
+            priceScale.updateAllViews();
+        }
+    }
+}
 
 	public resetPriceScale(priceScale: PriceScale): void {
 		const visibleBars = this._timeScale.visibleStrictRange();
@@ -427,28 +483,40 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	private _insertDataSource(source: IPriceDataSource, priceScaleId: string, order: number): void {
-		let priceScale = this.priceScaleById(priceScaleId);
+    let priceScale = this.priceScaleById(priceScaleId);
 
-		if (priceScale === null) {
-			priceScale = this._createPriceScale(priceScaleId, this._model.options().overlayPriceScales);
-		}
+    if (priceScale === null) {
+        priceScale = this._createPriceScale(priceScaleId, this._model.options().overlayPriceScales);
+    }
 
-		this._dataSources.splice(order, 0, source);
-		if (!isDefaultPriceScale(priceScaleId)) {
-			const overlaySources = this._overlaySourcesByScaleId.get(priceScaleId) || [];
-			overlaySources.push(source);
-			this._overlaySourcesByScaleId.set(priceScaleId, overlaySources);
-		}
+    this._dataSources.splice(order, 0, source);
+    if (!isDefaultPriceScale(priceScaleId)) {
+        const overlaySources = this._overlaySourcesByScaleId.get(priceScaleId) || [];
+        overlaySources.push(source);
+        this._overlaySourcesByScaleId.set(priceScaleId, overlaySources);
+    }
 
-		source.setZorder(order);
+    source.setZorder(order);
 
-		priceScale.addDataSource(source);
-		source.setPriceScale(priceScale);
+    priceScale.addDataSource(source);
+    source.setPriceScale(priceScale);
 
-		this.recalculatePriceScale(priceScale);
+    // Force price scale to be visible if it's the right scale and we're adding data
+    if (priceScaleId === DefaultPriceScaleId.Right && this._dataSources.length === 1) {
+        priceScale.applyOptions({
+            visible: true,
+            ticksVisible: true,
+            borderVisible: true,
+            autoScale: true,
+        });
+        
+        console.log('Forced right price scale to be visible for data source:', source.constructor.name);
+    }
 
-		this._cachedOrderedSources = null;
-	}
+    this.recalculatePriceScale(priceScale);
+
+    this._cachedOrderedSources = null;
+}
 
 	private _onPriceScaleModeChanged(priceScale: PriceScale, oldMode: PriceScaleState, newMode: PriceScaleState): void {
 		if (oldMode.mode === newMode.mode) {
@@ -460,15 +528,24 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	private _createPriceScale(id: string, options: OverlayPriceScaleOptions | VisiblePriceScaleOptions): PriceScale {
-		const actualOptions: PriceScaleOptions = { visible: true, autoScale: true, ...clone(options) };
-		const priceScale = new PriceScale(
-			id,
-			actualOptions,
-			this._model.options()['layout'],
-			this._model.options().localization,
-			this._model.colorParser()
-		);
-		priceScale.setHeight(this.height());
-		return priceScale;
-	}
+    const actualOptions: PriceScaleOptions = { visible: true, autoScale: true, ...clone(options) };
+    
+    // Force visibility for right price scale on indicator panes
+    const panes = this._model.panes();
+    if (panes.length > 0 && id === DefaultPriceScaleId.Right) {
+        actualOptions.visible = true;
+        actualOptions.ticksVisible = true;
+        actualOptions.borderVisible = true;
+    }
+    
+    const priceScale = new PriceScale(
+        id,
+        actualOptions,
+        this._model.options()['layout'],
+        this._model.options().localization,
+        this._model.colorParser()
+    );
+    priceScale.setHeight(this.height());
+    return priceScale;
+}
 }

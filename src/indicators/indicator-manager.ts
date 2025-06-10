@@ -61,13 +61,13 @@ export class IndicatorManager {
         },
         title: 'RSI(14)',
         visible: rsi.options().visible,
-        priceScaleId: 'rsi',
+        priceScaleId: 'right',
     });
 
     // Convert RSI data to the EXACT format the chart expects
     const seriesData = rsiData.map((point) => ({
         time: point.time,
-        value: point.value  // Just time and value, nothing else
+        value: point.value
     }));
     
     console.log('Setting RSI series data:', seriesData.length, 'points');
