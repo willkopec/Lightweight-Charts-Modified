@@ -62,11 +62,23 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
     this._leftPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._leftPriceScale), this);
     this._rightPriceScale.modeChanged().subscribe(this._onPriceScaleModeChanged.bind(this, this._rightPriceScale), this);
 
-    // Force right price scale to be visible for indicator panes (non-main panes)
+    // Check if this is an indicator pane (not the main pane)
     const panes = model.panes();
-    if (panes.length > 0) { // This means we're creating a new pane (not the first one)
-        const rightScaleOptions = { ...options.rightPriceScale, visible: true };
-        this._rightPriceScale = this._createPriceScale(DefaultPriceScaleId.Right, rightScaleOptions);
+    const isIndicatorPane = panes.length > 0; // If there are already panes, this is an indicator pane
+    
+    if (isIndicatorPane) {
+        console.log('Creating indicator pane - forcing right price scale visibility');
+        // For indicator panes, ensure right price scale is visible and configured properly
+        this._rightPriceScale.applyOptions({
+            visible: true,
+            autoScale: true,
+            scaleMargins: {
+                top: 0.1,
+                bottom: 0.1,
+            },
+            borderVisible: true,
+            ticksVisible: true,
+        });
     }
 
     this.applyScaleOptions(options);

@@ -35,7 +35,9 @@ import { Trendline } from './trendline';
 import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
 import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
-//import { RSIIndicator } from '../indicators/rsi';
+import { RSIIndicator } from '../indicators/rsi';
+import { PriceRangeImpl } from './price-range-impl';
+import { seriesOptionsDefaults } from '../api/options/series-options-defaults';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -1389,53 +1391,123 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 
 public addRSIIndicator(): string {
     try {
+        console.log('Adding RSI indicator...');
+        
         // Get main series data
         const mainSeries = this._serieses[0];
-        const priceData = IndicatorManager.seriesToPriceData(mainSeries);
+        if (!mainSeries) {
+            throw new Error('No main series found');
+        }
         
-        // Create new pane first
-        const newPane = this._getOrCreatePane(this._panes.length);
+        const priceData = IndicatorManager.seriesToPriceData(mainSeries);
+        console.log('Converted price data points:', priceData.length);
+        
+        // Create new pane for RSI
+        const newPaneIndex = this._panes.length;
+        const newPane = this._getOrCreatePane(newPaneIndex);
+        
+        // Set smaller stretch factor for indicator pane
         const mainPaneStretchFactor = this._panes[0].stretchFactor();
         newPane.setStretchFactor(mainPaneStretchFactor * 0.3);
         
-        // Use the indicator manager to add RSI properly
-        const indicatorId = this._indicatorManager.addRSI(
-            priceData,
-            () => newPane,
-            (pane: Pane, type: 'Line') => {
-                // Create series with right price scale
-                const mainOptions = mainSeries.options();
-                const rsiOptions = JSON.parse(JSON.stringify(mainOptions));
-                rsiOptions.color = '#FF6B35';
-                rsiOptions.title = 'RSI(14)';
-                rsiOptions.priceScaleId = 'right'; // Use right scale
-                
-                const rsiSeries = new Series(this, type, rsiOptions, (series: any) => ({
+        // Create RSI line series options
+        const rsiOptions = {
+            ...JSON.parse(JSON.stringify(seriesOptionsDefaults)), // Deep clone defaults
+            color: '#FF6B35',
+            lineWidth: 2,
+            title: 'RSI(14)',
+            priceScaleId: 'right',
+            visible: true,
+            lastValueVisible: true,
+            priceLineVisible: true,
+            priceFormat: {
+                type: 'price',
+                precision: 2,
+                minMove: 0.01,
+            },
+        };
+
+        // Create the RSI series using the same pattern as main series
+        const rsiSeries = new Series(
+            this,
+            'Line',
+            rsiOptions as any,
+            // Use a simple pane view creator that returns a basic line view
+            (series: any, model: any) => {
+                return {
                     update: () => {},
-                    renderer: () => ({ draw: () => {} }),
+                    renderer: () => ({
+                        draw: () => {},
+                        setData: () => {}
+                    }),
                     visible: () => true,
                     zOrder: () => 0
-                })) as any;
-                
-                this._addSeriesToPane(rsiSeries, pane);
-                this._serieses.push(rsiSeries);
-                
-                return rsiSeries;
+                } as any;
             }
         );
+
+        // Add series to the new pane first
+        this._addSeriesToPane(rsiSeries, newPane);
+        this._serieses.push(rsiSeries);
+
+        // Calculate RSI values using the imported class
+        const rsiIndicator = new RSIIndicator();
+        const rsiData = rsiIndicator.calculate(priceData);
         
-        // Force recreation of price axis widgets by firing options changed
+        console.log('RSI data calculated:', rsiData.length, 'points');
+        console.log('Sample RSI values:', rsiData.slice(0, 3));
+
+        // Convert to series format
+        const seriesData = rsiData.map((point: any) => ({
+            time: point.time,
+            value: point.value
+        }));
+
+        // Set the data
+        if (seriesData.length > 0) {
+            rsiSeries.setData(seriesData as any);
+        }
+
+        // Configure the price scale for RSI (0-100 range)
+        const rightPriceScale = newPane.rightPriceScale();
+        rightPriceScale.applyOptions({
+            visible: true,
+            autoScale: false, // Important: disable auto-scale for fixed range
+            scaleMargins: {
+                top: 0.1,
+                bottom: 0.1,
+            },
+            borderVisible: true,
+            ticksVisible: true,
+        });
+
+        // Set fixed price range for RSI (0-100)
+        const priceRangeImpl = new PriceRangeImpl(0, 100);
+        rightPriceScale.setPriceRange(priceRangeImpl);
+
+        // Force price scale to show marks
+        rightPriceScale.invalidateSourcesCache();
+        rightPriceScale.updateFormatter();
+
+        // Trigger multiple updates to ensure everything renders properly
         this._priceScalesOptionsChanged.fire();
-        
-        // Force multiple updates to ensure everything is redrawn
         this.fullUpdate();
         this.recalculateAllPanes();
-        this.fullUpdate(); // Second update after recalculation
+        
+        // Force another update after a short delay to ensure price axis renders
+        setTimeout(() => {
+            this._priceScalesOptionsChanged.fire();
+            this.fullUpdate();
+        }, 10);
+
+        const indicatorId = `RSI_${Date.now()}`;
+        console.log('RSI indicator added successfully with ID:', indicatorId);
         
         return indicatorId;
-    } catch (e) {
-        console.error('RSI creation failed:', e);
-        throw e;
+        
+    } catch (error) {
+        console.error('Failed to add RSI indicator:', error);
+        throw error;
     }
 }
 
@@ -1576,16 +1648,21 @@ public addRSIIndicator(): string {
 	private _getOrCreatePane(index: number): Pane {
     assert(index >= 0, 'Index should be greater or equal to 0');
     index = Math.min(this._panes.length, index);
+    
     if (index < this._panes.length) {
         return this._panes[index];
     }
 
+    console.log('Creating new pane at index:', index);
+    
     const pane = new Pane(this._timeScale, this);
     this._panes.push(pane);
 
-    // If this is not the main pane (index > 0), configure it for indicators
+    // If this is not the main pane (index > 0), configure it specifically for indicators
     if (index > 0) {
-        // Override the default chart options for indicator panes
+        console.log('Configuring indicator pane with visible price scales');
+        
+        // Force the right price scale to be visible and properly configured
         pane.applyScaleOptions({
             rightPriceScale: {
                 visible: true,
@@ -1601,18 +1678,21 @@ public addRSIIndicator(): string {
                 visible: false,
             }
         });
+        
+        // Ensure the price scale is marked as having data sources
+        const rightScale = pane.rightPriceScale();
+        rightScale.invalidateSourcesCache();
+        rightScale.updateFormatter();
     }
 
-    // we always do autoscaling on the creation
-    // if autoscale option is true, it is ok, just recalculate by invalidation mask
-    // if autoscale option is false, autoscale anyway on the first draw
-    // also there is a scenario when autoscale is true in constructor and false later on applyOptions
+    // Always do autoscaling on creation
     const mask = InvalidateMask.full();
     mask.invalidatePane(index, {
         level: InvalidationLevel.None,
         autoScale: true,
     });
     this._invalidate(mask);
+    
     return pane;
 }
 
