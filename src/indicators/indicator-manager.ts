@@ -48,34 +48,68 @@ export class IndicatorManager {
     // Create new pane for the indicator
     const pane = createPaneCallback();
     
-    // Create line series for RSI
+    // Create line series for RSI  
     const series = createSeriesCallback(pane, 'Line');
     
     // Configure series for RSI
     series.applyOptions({
         color: rsi.options().color,
+        lineWidth: 2 as any,
         priceFormat: {
             type: 'price',
             precision: 2,
             minMove: 0.01,
         },
         title: 'RSI(14)',
-        visible: rsi.options().visible,
+        visible: true,
         priceScaleId: 'right',
+        lastValueVisible: true,
+        priceLineVisible: false,
     });
 
-    // Convert RSI data to the EXACT format the chart expects
+    // Convert RSI data to line series format
     const seriesData = rsiData.map((point) => ({
         time: point.time,
         value: point.value
     }));
     
-    console.log('Setting RSI series data:', seriesData.length, 'points');
-    console.log('Sample RSI data:', seriesData.slice(0, 2));
-    
     if (seriesData.length > 0) {
-        // Use the public setData method with simple time/value format
+        // Set the data
         series.setData(seriesData as any);
+        
+        // CRITICAL: Force the time scale to recalculate after adding new series with data
+        const model = series.model();
+        model.timeScale().fitContent();
+        
+        // Force a full update of the entire chart
+        model.fullUpdate();
+        
+        // Add reference lines after a delay
+        setTimeout(() => {
+            series.createPriceLine({
+                price: 70,
+                color: '#787B86',
+                lineWidth: 1 as any,
+                lineStyle: 2 as any,
+                lineVisible: true,
+                axisLabelVisible: true,
+                axisLabelColor: '#787B86',
+                axisLabelTextColor: '#000000',
+                title: '',
+            });
+            
+            series.createPriceLine({
+                price: 30,
+                color: '#787B86',
+                lineWidth: 1 as any,
+                lineStyle: 2 as any,
+                lineVisible: true,
+                axisLabelVisible: true,
+                axisLabelColor: '#787B86',
+                axisLabelTextColor: '#000000',
+                title: '',
+            });
+        }, 100);
     }
 
     // Create indicator pane object
@@ -96,7 +130,6 @@ export class IndicatorManager {
 
     return id;
 }
-
     public removeIndicator(id: string): boolean {
         const indicatorPane = this._indicators.get(id);
         if (!indicatorPane) {

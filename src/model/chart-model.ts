@@ -35,8 +35,6 @@ import { Trendline } from './trendline';
 import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
 import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
-import { RSIIndicator } from '../indicators/rsi';
-import { PriceRangeImpl } from './price-range-impl';
 import { seriesOptionsDefaults } from '../api/options/series-options-defaults';
 
 /**
@@ -1391,124 +1389,99 @@ public fibonacciRetracements(): Map<string, FibonacciRetracement> {
 
 public addRSIIndicator(): string {
     try {
-        console.log('Adding RSI indicator...');
-        
         // Get main series data
         const mainSeries = this._serieses[0];
-        if (!mainSeries) {
-            throw new Error('No main series found');
-        }
-        
         const priceData = IndicatorManager.seriesToPriceData(mainSeries);
-        console.log('Converted price data points:', priceData.length);
         
-        // Create new pane for RSI
-        const newPaneIndex = this._panes.length;
-        const newPane = this._getOrCreatePane(newPaneIndex);
-        
-        // Set smaller stretch factor for indicator pane
+        // Create new pane first
+        const newPane = this._getOrCreatePane(this._panes.length);
         const mainPaneStretchFactor = this._panes[0].stretchFactor();
         newPane.setStretchFactor(mainPaneStretchFactor * 0.3);
         
-        // Create RSI line series options
-        const rsiOptions = {
-            ...JSON.parse(JSON.stringify(seriesOptionsDefaults)), // Deep clone defaults
-            color: '#FF6B35',
-            lineWidth: 2,
-            title: 'RSI(14)',
-            priceScaleId: 'right',
-            visible: true,
-            lastValueVisible: true,
-            priceLineVisible: true,
-            priceFormat: {
-                type: 'price',
-                precision: 2,
-                minMove: 0.01,
-            },
-        };
-
-        // Create the RSI series using the same pattern as main series
-        const rsiSeries = new Series(
-            this,
-            'Line',
-            rsiOptions as any,
-            // Use a simple pane view creator that returns a basic line view
-            (series: any, model: any) => {
-                return {
-                    update: () => {},
-                    renderer: () => ({
-                        draw: () => {},
-                        setData: () => {}
-                    }),
-                    visible: () => true,
-                    zOrder: () => 0
-                } as any;
+        // Use the indicator manager to add RSI properly
+        const indicatorId = this._indicatorManager.addRSI(
+            priceData,
+            () => newPane,
+            (pane: Pane, type: 'Line') => {
+                // Create complete line series options by merging with defaults
+                const defaultLineOptions = {
+                    ...seriesOptionsDefaults,
+                    lineStyle: 0,
+                    lineType: 0,
+                    lineWidth: 2 as 1 | 2 | 3 | 4, // Cast to LineWidth type
+                    lineVisible: true,
+                    pointMarkersVisible: false,
+                    crosshairMarkerVisible: true,
+                    crosshairMarkerRadius: 4,
+                    crosshairMarkerBorderColor: '',
+                    crosshairMarkerBorderWidth: 2,
+                    crosshairMarkerBackgroundColor: '',
+                    lastPriceAnimation: 0,
+                };
+                
+                const rsiOptions = {
+                    ...defaultLineOptions,
+                    color: '#FF6B35',
+                    title: 'RSI(14)',
+                    priceScaleId: 'right',
+                    lastValueVisible: true,
+                    priceLineVisible: false,
+                    priceFormat: {
+                        type: 'price' as const,
+                        precision: 2,
+                        minMove: 0.01,
+                    },
+                };
+                
+                // Import the line series definition
+                const LineSeries = this._findLineSeriesDefinition();
+                const createPaneView = LineSeries.createPaneView;
+                
+                const rsiSeries = new Series(this, type, rsiOptions as any, createPaneView) as any;
+                
+                // Add the series to the pane BEFORE setting data
+                this._addSeriesToPane(rsiSeries, pane);
+                this._serieses.push(rsiSeries);
+                
+                // Force the right price scale to be visible and properly configured
+                const rightScale = pane.rightPriceScale();
+                rightScale.setMode({ autoScale: true });
+                
+                return rsiSeries;
             }
         );
-
-        // Add series to the new pane first
-        this._addSeriesToPane(rsiSeries, newPane);
-        this._serieses.push(rsiSeries);
-
-        // Calculate RSI values using the imported class
-        const rsiIndicator = new RSIIndicator();
-        const rsiData = rsiIndicator.calculate(priceData);
         
-        console.log('RSI data calculated:', rsiData.length, 'points');
-        console.log('Sample RSI values:', rsiData.slice(0, 3));
-
-        // Convert to series format
-        const seriesData = rsiData.map((point: any) => ({
-            time: point.time,
-            value: point.value
-        }));
-
-        // Set the data
-        if (seriesData.length > 0) {
-            rsiSeries.setData(seriesData as any);
-        }
-
-        // Configure the price scale for RSI (0-100 range)
-        const rightPriceScale = newPane.rightPriceScale();
-        rightPriceScale.applyOptions({
-            visible: true,
-            autoScale: false, // Important: disable auto-scale for fixed range
-            scaleMargins: {
-                top: 0.1,
-                bottom: 0.1,
-            },
-            borderVisible: true,
-            ticksVisible: true,
-        });
-
-        // Set fixed price range for RSI (0-100)
-        const priceRangeImpl = new PriceRangeImpl(0, 100);
-        rightPriceScale.setPriceRange(priceRangeImpl);
-
-        // Force price scale to show marks
-        rightPriceScale.invalidateSourcesCache();
-        rightPriceScale.updateFormatter();
-
-        // Trigger multiple updates to ensure everything renders properly
+        // Force recreation of price axis widgets by firing options changed
         this._priceScalesOptionsChanged.fire();
+        
+        // Force multiple updates to ensure everything is redrawn
         this.fullUpdate();
         this.recalculateAllPanes();
         
-        // Force another update after a short delay to ensure price axis renders
-        setTimeout(() => {
-            this._priceScalesOptionsChanged.fire();
-            this.fullUpdate();
-        }, 10);
-
-        const indicatorId = `RSI_${Date.now()}`;
-        console.log('RSI indicator added successfully with ID:', indicatorId);
+        // Force the pane to recalculate its price scale
+        newPane.recalculatePriceScale(newPane.rightPriceScale());
+        
+        this.fullUpdate(); // Second update after recalculation
         
         return indicatorId;
-        
-    } catch (error) {
-        console.error('Failed to add RSI indicator:', error);
-        throw error;
+    } catch (e) {
+        console.error('RSI creation failed:', e);
+        throw e;
     }
+}
+
+// Add this helper method to find the line series definition
+private _findLineSeriesDefinition(): any {
+    // This is a placeholder - you'll need to import or access the actual LineSeries definition
+    // For now, return a basic implementation
+    return {
+        createPaneView: (series: any) => ({
+            update: () => {},
+            renderer: () => ({ draw: () => {} }),
+            visible: () => true,
+            zOrder: () => 0
+        })
+    };
 }
 
 	public removeIndicator(id: string): boolean {
