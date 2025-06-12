@@ -36,6 +36,7 @@ import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
 import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
 import { seriesOptionsDefaults } from '../api/options/series-options-defaults';
+import { lineSeries } from '../model/series/line-series';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -1403,12 +1404,13 @@ public addRSIIndicator(): string {
             priceData,
             () => newPane,
             (pane: Pane, type: 'Line') => {
-                // Create complete line series options by merging with defaults
-                const defaultLineOptions = {
+                // Create complete line series options
+                const rsiOptions = {
                     ...seriesOptionsDefaults,
+                    color: '#FF6B35',
                     lineStyle: 0,
                     lineType: 0,
-                    lineWidth: 2 as 1 | 2 | 3 | 4, // Cast to LineWidth type
+                    lineWidth: 2 as 1 | 2 | 3 | 4,
                     lineVisible: true,
                     pointMarkersVisible: false,
                     crosshairMarkerVisible: true,
@@ -1417,11 +1419,6 @@ public addRSIIndicator(): string {
                     crosshairMarkerBorderWidth: 2,
                     crosshairMarkerBackgroundColor: '',
                     lastPriceAnimation: 0,
-                };
-                
-                const rsiOptions = {
-                    ...defaultLineOptions,
-                    color: '#FF6B35',
                     title: 'RSI(14)',
                     priceScaleId: 'right',
                     lastValueVisible: true,
@@ -1433,11 +1430,8 @@ public addRSIIndicator(): string {
                     },
                 };
                 
-                // Import the line series definition
-                const LineSeries = this._findLineSeriesDefinition();
-                const createPaneView = LineSeries.createPaneView;
-                
-                const rsiSeries = new Series(this, type, rsiOptions as any, createPaneView) as any;
+                // Use the actual lineSeries definition (lowercase)
+                const rsiSeries = new Series(this, 'Line', rsiOptions, lineSeries.createPaneView);
                 
                 // Add the series to the pane BEFORE setting data
                 this._addSeriesToPane(rsiSeries, pane);
@@ -1468,20 +1462,6 @@ public addRSIIndicator(): string {
         console.error('RSI creation failed:', e);
         throw e;
     }
-}
-
-// Add this helper method to find the line series definition
-private _findLineSeriesDefinition(): any {
-    // This is a placeholder - you'll need to import or access the actual LineSeries definition
-    // For now, return a basic implementation
-    return {
-        createPaneView: (series: any) => ({
-            update: () => {},
-            renderer: () => ({ draw: () => {} }),
-            visible: () => true,
-            zOrder: () => 0
-        })
-    };
 }
 
 	public removeIndicator(id: string): boolean {

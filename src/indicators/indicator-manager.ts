@@ -77,11 +77,9 @@ export class IndicatorManager {
         // Set the data
         series.setData(seriesData as any);
         
-        // CRITICAL: Force the time scale to recalculate after adding new series with data
+        // CRITICAL FIX: Force recalculation of the pane
         const model = series.model();
-        model.timeScale().fitContent();
-        
-        // Force a full update of the entire chart
+        model.recalculatePane(pane);
         model.fullUpdate();
         
         // Add reference lines after a delay
@@ -130,6 +128,7 @@ export class IndicatorManager {
 
     return id;
 }
+
     public removeIndicator(id: string): boolean {
         const indicatorPane = this._indicators.get(id);
         if (!indicatorPane) {
