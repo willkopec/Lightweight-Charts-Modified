@@ -556,6 +556,7 @@ export class PriceScale {
 		const logical = this._coordinateToLogical(coordinate, baseValue);
 		return this.logicalToPrice(logical, baseValue);
 	}
+	
 
 	public logicalToPrice(logical: number, baseValue: number): BarPrice {
 		let value = logical;
@@ -633,26 +634,55 @@ export class PriceScale {
 	}
 
 	public marks(): PriceMark[] {
-		const firstValueIsNull = this.firstValue() === null;
+    const firstValueIsNull = this.firstValue() === null;
+    
+    // Debug for any right price scale with data sources
+    if (this._id === 'right' && this._dataSources.length > 0) {
+        console.log('=== PRICE SCALE MARKS DEBUG ===');
+        console.log('Price scale ID:', this._id);
+        console.log('First value is null:', firstValueIsNull);
+        console.log('Price scale height:', this._height);
+        console.log('Price scale internal height:', this.internalHeight());
+        console.log('Price range:', this._priceRange);
+        console.log('Data sources count:', this._dataSources.length);
+        console.log('Is empty:', this.isEmpty());
+        
+        const firstValue = this._dataSources[0].firstValue();
+        console.log('First data source first value:', firstValue);
+        if (firstValue) {
+            console.log('First value breakdown - value:', firstValue.value, 'timePoint:', firstValue.timePoint);
+        }
+    }
 
-		// do not recalculate marks if firstValueIsNull is true because in this case we'll always get empty result
-		// this could happen in case when a series had some data and then you set empty data to it (in a simplified case)
-		// we could display an empty price scale, but this is not good from UX
-		// so in this case we need to keep an previous marks to display them on the scale
-		// as one of possible examples for this situation could be the following:
-		// let's say you have a study/indicator attached to a price scale and then you decide to stop it, i.e. remove its data because of its visibility
-		// a user will see the previous marks on the scale until you turn on your study back or remove it from the chart completely
-		if (this._marksCache !== null && (firstValueIsNull || this._marksCache.firstValueIsNull === firstValueIsNull)) {
-			return this._marksCache.marks;
-		}
+    if (this._marksCache !== null && (firstValueIsNull || this._marksCache.firstValueIsNull === firstValueIsNull)) {
+        if (this._id === 'right' && this._dataSources.length > 0) {
+            console.log('Using cached marks:', this._marksCache.marks.length);
+            console.log('=== END MARKS DEBUG ===');
+        }
+        return this._marksCache.marks;
+    }
 
-		this._markBuilder.rebuildTickMarks();
-		const marks = this._markBuilder.marks();
-		this._marksCache = { marks, firstValueIsNull };
-		this._onMarksChanged.fire();
+    if (this._id === 'right' && this._dataSources.length > 0) {
+        console.log('Rebuilding tick marks...');
+    }
+    
+    this._markBuilder.rebuildTickMarks();
+    const marks = this._markBuilder.marks();
+    
+    if (this._id === 'right' && this._dataSources.length > 0) {
+        console.log('Generated marks:', marks.length);
+        if (marks.length > 0) {
+            console.log('First mark:', marks[0]);
+            console.log('Last mark:', marks[marks.length - 1]);
+        }
+        console.log('=== END MARKS DEBUG ===');
+    }
+    
+    this._marksCache = { marks, firstValueIsNull };
+    this._onMarksChanged.fire();
 
-		return marks;
-	}
+    return marks;
+}
 
 	public onMarksChanged(): ISubscription {
 		return this._onMarksChanged;

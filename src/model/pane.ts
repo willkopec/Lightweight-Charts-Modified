@@ -375,13 +375,30 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
     
     // Special handling for indicator panes - force marks generation
     if (priceScale === this._rightPriceScale && this._dataSources.length > 0) {
-        // Force the price scale to generate marks even if it thinks it's empty
-        const visibleBars = this._timeScale.visibleStrictRange();
-        if (visibleBars !== null) {
-            priceScale.recalculatePriceRange(visibleBars);
-            // Force marks calculation
-            priceScale.marks();
-            priceScale.updateAllViews();
+        // Check if this is an indicator pane (has non-main series data)
+        const hasIndicatorData = this._dataSources.some(ds => {
+            // You can add more specific checks here if needed
+            return ds.priceScale() === priceScale;
+        });
+        
+        if (hasIndicatorData) {
+            // Force the price scale to generate marks even if it thinks it's empty
+            const visibleBars = this._timeScale.visibleStrictRange();
+            if (visibleBars !== null) {
+                priceScale.recalculatePriceRange(visibleBars);
+                
+                // Force update the formatter to ensure labels are generated
+                priceScale.updateFormatter();
+                
+                // Invalidate the source cache to force recalculation
+                priceScale.invalidateSourcesCache();
+                
+                // Force marks calculation
+                priceScale.marks();
+                
+                // Update all views to ensure the price axis renders
+                priceScale.updateAllViews();
+            }
         }
     }
 }
@@ -481,18 +498,98 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
 	}
 
 	private _recalculatePriceScaleImpl(priceScale: PriceScale): void {
-		// TODO: can use this checks
-		const sourceForAutoScale = priceScale.sourcesForAutoScale();
+    // Debug: Check what data sources we have in this pane
+    console.log('=== PANE RECALCULATION DEBUG ===');
+    console.log('Data sources count:', this._dataSources.length);
+    console.log('Price scale ID:', priceScale.id());
+    console.log('Is right price scale:', priceScale === this._rightPriceScale);
+    
+    this._dataSources.forEach((ds, index) => {
+        console.log(`Data source ${index}:`, ds);
+        console.log(`  - Constructor:`, ds.constructor.name);
+        console.log(`  - Has title method:`, typeof (ds as any).title === 'function');
+        if (typeof (ds as any).title === 'function') {
+            console.log(`  - Title:`, (ds as any).title());
+        }
+        console.log(`  - Price scale:`, ds.priceScale()?.id());
+    });
+    
+    // Check if this is an RSI indicator pane - try multiple detection methods
+    const isRSIPane = this._dataSources.length > 0 && 
+                     (this._dataSources.some(ds => {
+                         // Method 1: Check title
+                         if (typeof (ds as any).title === 'function') {
+                             const title = (ds as any).title();
+                             console.log('Checking title:', title);
+                             return title === 'RSI(14)';
+                         }
+                         
+                         // Method 2: Check if it's a Series with RSI options
+                         if (ds.constructor.name === 'Series') {
+                             const options = (ds as any).options();
+                             console.log('Series options:', options);
+                             return options && options.title === 'RSI(14)';
+                         }
+                         
+                         return false;
+                     }) ||
+                     // Method 3: Check if we're not the first pane (indicator panes)
+                     (this._model.panes().indexOf(this as any) > 0));
+    
+    console.log('Is RSI pane:', isRSIPane);
+    console.log('=== END PANE DEBUG ===');
+    
+    if (isRSIPane && priceScale === this._rightPriceScale) {
+        console.log('Configuring RSI pane with fixed 0-100 range');
+        
+        // Force RSI range to 0-100 instead of auto-scaling
+        try {
+            // Create a simple range object that matches PriceRangeImpl interface
+            const rsiRange = {
+                minValue: () => 0,
+                maxValue: () => 100,
+                length: () => 100,
+                isEmpty: () => false,
+                merge: (other: any) => rsiRange,
+                equals: (other: any) => false,
+                clone: () => rsiRange,
+                scaleAroundCenter: (scale: number) => {},
+                shift: (delta: number) => {}
+            };
+            
+            priceScale.setPriceRange(rsiRange as any, true);
+            console.log('Set RSI range to 0-100');
+            
+        } catch (e) {
+            console.warn('Could not set RSI range, falling back to auto-scale:', e);
+            // Fallback to normal auto-scaling if range setting fails
+            const sourceForAutoScale = priceScale.sourcesForAutoScale();
+            if (sourceForAutoScale && sourceForAutoScale.length > 0 && !this._timeScale.isEmpty()) {
+                const visibleBars = this._timeScale.visibleStrictRange();
+                if (visibleBars !== null) {
+                    priceScale.recalculatePriceRange(visibleBars);
+                }
+            }
+        }
+        
+        // Force update formatter and marks for RSI
+        priceScale.updateFormatter();
+        priceScale.invalidateSourcesCache();
+        
+    } else {
+        // Normal price scale recalculation for non-RSI panes
+        const sourceForAutoScale = priceScale.sourcesForAutoScale();
 
-		if (sourceForAutoScale && sourceForAutoScale.length > 0 && !this._timeScale.isEmpty()) {
-			const visibleBars = this._timeScale.visibleStrictRange();
-			if (visibleBars !== null) {
-				priceScale.recalculatePriceRange(visibleBars);
-			}
-		}
+        if (sourceForAutoScale && sourceForAutoScale.length > 0 && !this._timeScale.isEmpty()) {
+            const visibleBars = this._timeScale.visibleStrictRange();
+            if (visibleBars !== null) {
+                priceScale.recalculatePriceRange(visibleBars);
+            }
+        }
+    }
 
-		priceScale.updateAllViews();
-	}
+    priceScale.updateAllViews();
+}
 
 	private _insertDataSource(source: IPriceDataSource, priceScaleId: string, order: number): void {
     let priceScale = this.priceScaleById(priceScaleId);

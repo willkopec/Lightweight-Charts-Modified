@@ -47,69 +47,76 @@ export class RSIIndicator {
     }
 
     public calculate(priceData: readonly PriceData[]): RSIData[] {
-        if (priceData.length < this._options.period + 1) {
-            this._data = [];
-            return this._data;
+    if (priceData.length < this._options.period + 1) {
+        this._data = [];
+        return this._data;
+    }
+
+    const rsiValues: RSIData[] = [];
+    const period = this._options.period;
+
+    // Calculate price changes
+    const priceChanges: number[] = [];
+    for (let i = 1; i < priceData.length; i++) {
+        priceChanges.push(priceData[i].close - priceData[i - 1].close);
+    }
+
+    // Calculate initial averages for the first RSI value
+    let avgGain = 0;
+    let avgLoss = 0;
+
+    for (let i = 0; i < period; i++) {
+        const change = priceChanges[i];
+        if (change > 0) {
+            avgGain += change;
+        } else {
+            avgLoss += Math.abs(change);
+        }
+    }
+
+    avgGain /= period;
+    avgLoss /= period;
+
+    // Calculate first RSI value
+    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    let rsi = 100 - (100 / (1 + rs));
+
+    // FIXED: Use proper property names
+    rsiValues.push({
+        time: priceData[period].time,
+        value: rsi
+    });
+
+    // Calculate subsequent RSI values using smoothed averages
+    for (let i = period; i < priceChanges.length; i++) {
+        const change = priceChanges[i];
+        
+        if (change > 0) {
+            avgGain = ((avgGain * (period - 1)) + change) / period;
+            avgLoss = (avgLoss * (period - 1)) / period;
+        } else {
+            avgGain = (avgGain * (period - 1)) / period;
+            avgLoss = ((avgLoss * (period - 1)) + Math.abs(change)) / period;
         }
 
-        const rsiValues: RSIData[] = [];
-        const period = this._options.period;
+        rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        rsi = 100 - (100 / (1 + rs));
 
-        // Calculate price changes
-        const priceChanges: number[] = [];
-        for (let i = 1; i < priceData.length; i++) {
-            priceChanges.push(priceData[i].close - priceData[i - 1].close);
-        }
-
-        // Calculate initial averages for the first RSI value
-        let avgGain = 0;
-        let avgLoss = 0;
-
-        for (let i = 0; i < period; i++) {
-            const change = priceChanges[i];
-            if (change > 0) {
-                avgGain += change;
-            } else {
-                avgLoss += Math.abs(change);
-            }
-        }
-
-        avgGain /= period;
-        avgLoss /= period;
-
-        // Calculate first RSI value
-        let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        let rsi = 100 - (100 / (1 + rs));
-
+        // FIXED: Use proper property names
         rsiValues.push({
-            time: priceData[period].time,
+            time: priceData[i + 1].time,
             value: rsi
         });
-
-        // Calculate subsequent RSI values using smoothed averages
-        for (let i = period; i < priceChanges.length; i++) {
-            const change = priceChanges[i];
-            
-            if (change > 0) {
-                avgGain = ((avgGain * (period - 1)) + change) / period;
-                avgLoss = (avgLoss * (period - 1)) / period;
-            } else {
-                avgGain = (avgGain * (period - 1)) / period;
-                avgLoss = ((avgLoss * (period - 1)) + Math.abs(change)) / period;
-            }
-
-            rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-            rsi = 100 - (100 / (1 + rs));
-
-            rsiValues.push({
-                time: priceData[i + 1].time,
-                value: rsi
-            });
-        }
-
-        this._data = rsiValues;
-        return rsiValues;
     }
+
+    this._data = rsiValues;
+    console.log('RSI calculation complete. First few values:');
+    rsiValues.slice(0, 3).forEach((val, idx) => {
+        console.log(`RSI[${idx}]:`, val);
+    });
+    
+    return rsiValues;
+}
 
     public getLastValue(): number | null {
         if (this._data.length === 0) {

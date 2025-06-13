@@ -36,7 +36,6 @@ import { TrendlineData } from './trendline-data';
 import { FibonacciRetracement } from './fibonacci-retracement';
 import { IndicatorManager, IndicatorPane, IndicatorManagerCallbacks } from '../indicators/indicator-manager';
 import { seriesOptionsDefaults } from '../api/options/series-options-defaults';
-import { lineSeries } from '../model/series/line-series';
 
 /**
  * Represents options for how the chart is scrolled by the mouse and touch gestures.
@@ -1404,13 +1403,12 @@ public addRSIIndicator(): string {
             priceData,
             () => newPane,
             (pane: Pane, type: 'Line') => {
-                // Create complete line series options
-                const rsiOptions = {
+                // Create complete line series options by merging with defaults
+                const defaultLineOptions = {
                     ...seriesOptionsDefaults,
-                    color: '#FF6B35',
                     lineStyle: 0,
                     lineType: 0,
-                    lineWidth: 2 as 1 | 2 | 3 | 4,
+                    lineWidth: 2 as 1 | 2 | 3 | 4, // Cast to LineWidth type
                     lineVisible: true,
                     pointMarkersVisible: false,
                     crosshairMarkerVisible: true,
@@ -1419,6 +1417,11 @@ public addRSIIndicator(): string {
                     crosshairMarkerBorderWidth: 2,
                     crosshairMarkerBackgroundColor: '',
                     lastPriceAnimation: 0,
+                };
+                
+                const rsiOptions = {
+                    ...defaultLineOptions,
+                    color: '#FF6B35',
                     title: 'RSI(14)',
                     priceScaleId: 'right',
                     lastValueVisible: true,
@@ -1430,8 +1433,11 @@ public addRSIIndicator(): string {
                     },
                 };
                 
-                // Use the actual lineSeries definition (lowercase)
-                const rsiSeries = new Series(this, 'Line', rsiOptions, lineSeries.createPaneView);
+                // Import the line series definition
+                const LineSeries = this._findLineSeriesDefinition();
+                const createPaneView = LineSeries.createPaneView;
+                
+                const rsiSeries = new Series(this, type, rsiOptions as any, createPaneView) as any;
                 
                 // Add the series to the pane BEFORE setting data
                 this._addSeriesToPane(rsiSeries, pane);
@@ -1462,6 +1468,26 @@ public addRSIIndicator(): string {
         console.error('RSI creation failed:', e);
         throw e;
     }
+}
+
+// Add this helper method to find the line series definition
+private _findLineSeriesDefinition(): any {
+    // Return a minimal but functional line series definition
+    return {
+        createPaneView: (series: any, model: any) => {
+            // Create a simple pane view that delegates to the series' internal pane view
+            return {
+                update: () => {},
+                renderer: () => {
+                    // Return the series' own pane view renderer if it exists
+                    if (series._paneView && series._paneView.renderer) {
+                        return series._paneView.renderer();
+                    }
+                    return null;
+                }
+            };
+        }
+    };
 }
 
 	public removeIndicator(id: string): boolean {
@@ -1551,50 +1577,47 @@ public addRSIIndicator(): string {
     const pane = indicatorPane.pane;
     
     if (indicatorPane.type === 'RSI') {
-        // Get all price scales in the pane
+        console.log('=== CONFIGURING RSI PANE ===');
+        
+        // Get the right price scale
         const rightPriceScale = pane.rightPriceScale();
-        const rsiPriceScale = pane.priceScaleById('rsi-scale');
         
-        console.log('=== RSI PANE DEBUG ===');
-        console.log('Right price scale visible:', rightPriceScale.options().visible);
-        console.log('Right price scale data sources:', rightPriceScale.dataSources().length);
-        console.log('RSI price scale exists:', !!rsiPriceScale);
-        
-        if (rsiPriceScale) {
-            console.log('RSI price scale visible:', rsiPriceScale.options().visible);
-            console.log('RSI price scale data sources:', rsiPriceScale.dataSources().length);
-            
-            // Try to get marks
-            try {
-                const marks = rsiPriceScale.marks();
-                console.log('RSI price scale marks:', marks.length);
-                if (marks.length > 0) {
-                    console.log('First mark:', marks[0]);
-                }
-            } catch (e) {
-                console.log('Error getting marks:', e);
-            }
-        }
-        
-        console.log('Pane data sources:', pane.dataSources().length);
-        console.log('=== END DEBUG ===');
-        
-        // Configure both scales to be visible
+        // Configure the price scale with proper options
         rightPriceScale.applyOptions({
             visible: true,
             autoScale: true,
             borderVisible: true,
             ticksVisible: true,
+            scaleMargins: {
+                top: 0.1,
+                bottom: 0.1,
+            },
+            alignLabels: true,
+            entireTextOnly: false,
+            minimumWidth: 0,
         });
         
-        if (rsiPriceScale) {
-            rsiPriceScale.applyOptions({
-                visible: true,
-                autoScale: true,
-                borderVisible: true,
-                ticksVisible: true,
-            });
+        // CRITICAL: Force the price scale to update its formatter and marks
+        rightPriceScale.updateFormatter();
+        
+        // Force recalculation of the price range to ensure proper scaling
+        const visibleRange = this._timeScale.visibleStrictRange();
+        if (visibleRange !== null) {
+            rightPriceScale.recalculatePriceRange(visibleRange);
         }
+        
+        // Force the price scale to regenerate marks by clearing cache
+        rightPriceScale.invalidateSourcesCache();
+        (rightPriceScale as any)._marksCache = null;
+        
+        console.log('RSI pane configured with visible price scale');
+        console.log('Right price scale visible:', rightPriceScale.options().visible);
+        console.log('Right price scale data sources:', rightPriceScale.dataSources().length);
+        
+        // Force a complete recalculation
+        pane.recalculatePriceScale(rightPriceScale);
+        
+        console.log('=== RSI PANE CONFIGURATION COMPLETE ===');
     }
 }
 

@@ -45,6 +45,12 @@ export class IndicatorManager {
     const rsiData = rsi.calculate(mainSeriesData);
     console.log('RSI calculated, data points:', rsiData.length);
     
+    if (rsiData.length > 0) {
+        console.log('First RSI data point:', rsiData[0]);
+        console.log('Last RSI data point:', rsiData[rsiData.length - 1]);
+        console.log('Sample RSI values:', rsiData.slice(0, 5).map(p => p.value));
+    }
+    
     // Create new pane for the indicator
     const pane = createPaneCallback();
     
@@ -68,14 +74,79 @@ export class IndicatorManager {
     });
 
     // Convert RSI data to line series format
-    const seriesData = rsiData.map((point) => ({
-        time: point.time,
-        value: point.value
-    }));
+    console.log('Converting RSI data to series format...');
+    const seriesData = rsiData.map((point, index) => {
+        // Ensure we're using the correct property names
+        const dataPoint = {
+            time: point.time,
+            value: point.value
+        };
+        if (index < 3) {
+            console.log('RSI series data point', index, ':', dataPoint);
+            console.log('Original RSI point:', point);
+            console.log('Point.time type:', typeof point.time, 'Point.value type:', typeof point.value);
+        }
+        return dataPoint;
+    });
+    
+    console.log('Setting RSI series data, points:', seriesData.length);
     
     if (seriesData.length > 0) {
-        // Set the data
-        series.setData(seriesData as any);
+        // CRITICAL: Check if all timestamps are the same (this would break the chart)
+        const firstTime = seriesData[0].time;
+        const lastTime = seriesData[seriesData.length - 1].time;
+        const allSameTime = seriesData.every(point => point.time === firstTime);
+        
+        console.log('Time analysis:');
+        console.log('First time:', firstTime);
+        console.log('Last time:', lastTime);
+        console.log('All times the same:', allSameTime);
+        
+        if (allSameTime) {
+            console.error('ERROR: All RSI data points have the same timestamp! This will break the chart.');
+            console.log('Sample timestamps:', seriesData.slice(0, 10).map(p => p.time));
+            
+            // Try to fix by using incremental timestamps
+            console.log('Attempting to fix timestamps...');
+            const baseTime = firstTime;
+            seriesData.forEach((point, index) => {
+                point.time = baseTime + index; // Add index to make unique timestamps
+            });
+            console.log('Fixed timestamps, first few:', seriesData.slice(0, 5).map(p => p.time));
+        }
+        
+        // Set the data using simple format first
+        console.log('About to call series.setData with:', seriesData.length, 'points');
+        console.log('First series data point:', seriesData[0]);
+        console.log('Last series data point:', seriesData[seriesData.length - 1]);
+        
+        // Create clean data without _internal_ prefixes for setData
+        const cleanSeriesData = seriesData.map(point => ({
+            time: point.time,
+            value: point.value
+        }));
+        
+        console.log('Clean series data sample:', cleanSeriesData.slice(0, 3));
+        
+        try {
+            series.setData(cleanSeriesData as any);
+            console.log('Series data set successfully with clean format');
+        } catch (error) {
+            console.error('Failed to set series data:', error);
+        }
+        
+        // Check what the series now contains
+        const seriesBars = series.bars();
+        const seriesIndices = seriesBars.indices();
+        console.log('Series now has', seriesIndices.length, 'data points');
+        
+        if (seriesIndices.length > 0) {
+            const firstSeriesBar = seriesBars.valueAt(seriesIndices[0]);
+            console.log('First series bar after setData:', firstSeriesBar);
+            if (firstSeriesBar && firstSeriesBar.value) {
+                console.log('First series bar value:', firstSeriesBar.value);
+            }
+        }
         
         // CRITICAL FIX: Force recalculation of the pane
         const model = series.model();
@@ -108,6 +179,8 @@ export class IndicatorManager {
                 title: '',
             });
         }, 100);
+    } else {
+        console.error('No RSI series data to set!');
     }
 
     // Create indicator pane object
@@ -196,7 +269,6 @@ export class IndicatorManager {
         this._indicators.clear();
     }
 
-    // Helper method to convert series data to price data format - IMPROVED VERSION
     public static seriesToPriceData(series: Series<SeriesType>): PriceData[] {
     console.log('Converting series to price data...');
     
@@ -215,6 +287,10 @@ export class IndicatorManager {
                 console.log('First bar value structure:', firstBar.value);
                 console.log('First bar value type:', typeof firstBar.value);
                 console.log('First bar value length:', Array.isArray(firstBar.value) ? firstBar.value.length : 'not array');
+                console.log('First bar value contents:', firstBar.value);
+            }
+            if (firstBar && firstBar.time) {
+                console.log('First bar time:', firstBar.time);
             }
         }
         
@@ -223,7 +299,7 @@ export class IndicatorManager {
         for (const index of indices) {
             const bar = bars.valueAt(index);
             if (bar && bar.value) {
-                // Extract time - handle different time formats
+                // Extract time - FIXED timestamp handling
                 let timestamp: number;
                 const timePoint = bar.time;
                 
@@ -234,16 +310,29 @@ export class IndicatorManager {
                     const date = new Date(timePoint);
                     timestamp = date.getTime() / 1000; // Convert to seconds
                 } else if (timePoint && typeof timePoint === 'object') {
-                    // Handle business day format like { year: 2023, month: 12, day: 15 }
-                    if ('year' in timePoint && 'month' in timePoint && 'day' in timePoint) {
+                    // FIXED: Use direct property access instead of 'in' operator
+                    const internalTimestamp = (timePoint as any)._internal_timestamp;
+                    
+                    if (internalTimestamp !== undefined && typeof internalTimestamp === 'number') {
+                        timestamp = internalTimestamp;
+                        if (index < 3) {
+                            console.log('Using _internal_timestamp:', timestamp);
+                        }
+                    } else if ('year' in timePoint && 'month' in timePoint && 'day' in timePoint) {
+                        // Handle business day format like { year: 2023, month: 12, day: 15 }
                         const businessDay = timePoint as any;
                         const date = new Date(businessDay.year, businessDay.month - 1, businessDay.day);
                         timestamp = date.getTime() / 1000;
                     } else {
-                        timestamp = Date.now() / 1000;
+                        // Try to use originalTime if available
+                        timestamp = (bar as any).originalTime || Date.now() / 1000;
+                        if (index < 3) {
+                            console.log('Using fallback timestamp:', timestamp);
+                        }
                     }
                 } else {
-                    timestamp = Date.now() / 1000;
+                    // Use originalTime as fallback
+                    timestamp = (bar as any).originalTime || Date.now() / 1000;
                 }
                 
                 // Extract close price - handle different series types
@@ -258,21 +347,39 @@ export class IndicatorManager {
                     } else if (values.length > 0) {
                         closePrice = values[values.length - 1]; // Last available value
                     } else {
+                        console.warn('Empty values array for bar at index:', index);
                         continue; // Skip this bar if no values
                     }
                 } else if (typeof values === 'number') {
                     // Single value (like Line series)
                     closePrice = values;
                 } else {
+                    console.warn('Unknown value type for bar at index:', index, 'values:', values);
                     continue; // Skip if we can't determine price
                 }
                 
-                if (typeof closePrice === 'number' && !isNaN(closePrice) && isFinite(closePrice)) {
-                    priceData.push({
-                        time: timestamp,
-                        close: closePrice
-                    });
+                // Additional validation for closePrice
+                if (typeof closePrice !== 'number' || isNaN(closePrice) || !isFinite(closePrice)) {
+                    console.warn('Invalid close price for bar at index:', index, 'closePrice:', closePrice);
+                    continue;
                 }
+                
+                // Create the data object with explicit property assignment to avoid any proxy issues
+                const dataPoint: PriceData = {} as PriceData;
+                dataPoint.time = timestamp;
+                dataPoint.close = closePrice;
+                
+                priceData.push(dataPoint);
+                
+                // Debug: check what we're actually creating
+                if (priceData.length <= 3) {
+                    const justAdded = priceData[priceData.length - 1];
+                    console.log(`Created price data[${priceData.length - 1}]:`, justAdded);
+                    console.log('Properties:', Object.keys(justAdded));
+                    console.log('time value:', justAdded.time, 'close value:', justAdded.close);
+                }
+            } else {
+                console.warn('Invalid bar data at index:', index, 'bar:', bar);
             }
         }
         
@@ -280,12 +387,19 @@ export class IndicatorManager {
         priceData.sort((a, b) => a.time - b.time);
         
         console.log('Converted to', priceData.length, 'price data points');
-        console.log('Sample data:', priceData.slice(0, 3));
+        if (priceData.length > 0) {
+            console.log('First price data point:', priceData[0]);
+            console.log('Last price data point:', priceData[priceData.length - 1]);
+            console.log('Sample prices:', priceData.slice(0, 5).map(p => p.close));
+        }
         
         return priceData;
         
     } catch (error) {
         console.error('Error converting series to price data:', error);
+        if (error instanceof Error) {
+            console.error('Error stack:', error.stack);
+        }
         return [];
     }
 }
