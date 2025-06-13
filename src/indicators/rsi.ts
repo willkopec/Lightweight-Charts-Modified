@@ -81,10 +81,10 @@ export class RSIIndicator {
     let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
     let rsi = 100 - (100 / (1 + rs));
 
-    // FIXED: Use proper property names
+    // CRITICAL FIX: Use the exact property names that lightweight-charts expects
     rsiValues.push({
-        time: priceData[period].time,
-        value: rsi
+        time: priceData[period].time,  // Use 'time', not '_internal_time'
+        value: rsi                     // Use 'value', not '_internal_value'
     });
 
     // Calculate subsequent RSI values using smoothed averages
@@ -102,17 +102,19 @@ export class RSIIndicator {
         rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
         rsi = 100 - (100 / (1 + rs));
 
-        // FIXED: Use proper property names
+        // CRITICAL FIX: Use the exact property names that lightweight-charts expects
         rsiValues.push({
-            time: priceData[i + 1].time,
-            value: rsi
+            time: priceData[i + 1].time,  // Use 'time', not '_internal_time'
+            value: rsi                    // Use 'value', not '_internal_value'
         });
     }
 
     this._data = rsiValues;
-    console.log('RSI calculation complete. First few values:');
+    console.log('RSI calculation complete. First few values with correct format:');
     rsiValues.slice(0, 3).forEach((val, idx) => {
         console.log(`RSI[${idx}]:`, val);
+        console.log(`  - time type: ${typeof val.time}, value type: ${typeof val.value}`);
+        console.log(`  - time: ${val.time}, value: ${val.value}`);
     });
     
     return rsiValues;

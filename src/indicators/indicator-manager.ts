@@ -29,7 +29,9 @@ export class IndicatorManager {
         this._callbacks = callbacks;
     }
 
-    public addRSI(
+    // Replace the addRSI method in indicator-manager.ts with this fixed version:
+
+public addRSI(
     mainSeriesData: readonly PriceData[], 
     createPaneCallback: () => Pane,
     createSeriesCallback: (pane: Pane, type: 'Line') => Series<'Line'>
@@ -73,111 +75,136 @@ export class IndicatorManager {
         priceLineVisible: false,
     });
 
-    // Convert RSI data to line series format
-    console.log('Converting RSI data to series format...');
+    // Convert RSI data to series format
     const seriesData = rsiData.map((point, index) => {
-        // Ensure we're using the correct property names
-        const dataPoint = {
+        return {
             time: point.time,
             value: point.value
         };
-        if (index < 3) {
-            console.log('RSI series data point', index, ':', dataPoint);
-            console.log('Original RSI point:', point);
-            console.log('Point.time type:', typeof point.time, 'Point.value type:', typeof point.value);
-        }
-        return dataPoint;
     });
     
     console.log('Setting RSI series data, points:', seriesData.length);
     
     if (seriesData.length > 0) {
-        // CRITICAL: Check if all timestamps are the same (this would break the chart)
-        const firstTime = seriesData[0].time;
-        const lastTime = seriesData[seriesData.length - 1].time;
-        const allSameTime = seriesData.every(point => point.time === firstTime);
-        
-        console.log('Time analysis:');
-        console.log('First time:', firstTime);
-        console.log('Last time:', lastTime);
-        console.log('All times the same:', allSameTime);
-        
-        if (allSameTime) {
-            console.error('ERROR: All RSI data points have the same timestamp! This will break the chart.');
-            console.log('Sample timestamps:', seriesData.slice(0, 10).map(p => p.time));
-            
-            // Try to fix by using incremental timestamps
-            console.log('Attempting to fix timestamps...');
-            const baseTime = firstTime;
-            seriesData.forEach((point, index) => {
-                point.time = baseTime + index; // Add index to make unique timestamps
-            });
-            console.log('Fixed timestamps, first few:', seriesData.slice(0, 5).map(p => p.time));
-        }
-        
-        // Set the data using simple format first
-        console.log('About to call series.setData with:', seriesData.length, 'points');
-        console.log('First series data point:', seriesData[0]);
-        console.log('Last series data point:', seriesData[seriesData.length - 1]);
-        
-        // Create clean data without _internal_ prefixes for setData
-        const cleanSeriesData = seriesData.map(point => ({
-            time: point.time,
-            value: point.value
-        }));
-        
-        console.log('Clean series data sample:', cleanSeriesData.slice(0, 3));
-        
         try {
-            series.setData(cleanSeriesData as any);
-            console.log('Series data set successfully with clean format');
-        } catch (error) {
-            console.error('Failed to set series data:', error);
-        }
-        
-        // Check what the series now contains
-        const seriesBars = series.bars();
-        const seriesIndices = seriesBars.indices();
-        console.log('Series now has', seriesIndices.length, 'data points');
-        
-        if (seriesIndices.length > 0) {
-            const firstSeriesBar = seriesBars.valueAt(seriesIndices[0]);
-            console.log('First series bar after setData:', firstSeriesBar);
-            if (firstSeriesBar && firstSeriesBar.value) {
-                console.log('First series bar value:', firstSeriesBar.value);
-            }
-        }
-        
-        // CRITICAL FIX: Force recalculation of the pane
-        const model = series.model();
-        model.recalculatePane(pane);
-        model.fullUpdate();
-        
-        // Add reference lines after a delay
-        setTimeout(() => {
-            series.createPriceLine({
-                price: 70,
-                color: '#787B86',
-                lineWidth: 1 as any,
-                lineStyle: 2 as any,
-                lineVisible: true,
-                axisLabelVisible: true,
-                axisLabelColor: '#787B86',
-                axisLabelTextColor: '#000000',
-                title: '',
-            });
+            // Set the data first
+            series.setData(seriesData as any);
+            console.log('RSI data set on series');
             
-            series.createPriceLine({
-                price: 30,
-                color: '#787B86',
-                lineWidth: 1 as any,
-                lineStyle: 2 as any,
-                lineVisible: true,
-                axisLabelVisible: true,
-                axisLabelColor: '#787B86',
-                axisLabelTextColor: '#000000',
-                title: '',
-            });
+            // CRITICAL BYPASS: Instead of relying on the broken firstValue() method,
+            // let's directly override the price scale's data source methods
+            const priceScale = series.priceScale();
+            if (priceScale) {
+                console.log('Overriding price scale methods to bypass firstValue issue...');
+                
+                // Override the firstValue method on the SERIES itself
+                const originalFirstValue = series.firstValue.bind(series);
+                (series as any).firstValue = function() {
+                    // Return a working firstValue based on our RSI data
+                    if (rsiData.length > 0) {
+                        return {
+                            value: rsiData[0].value,      // Use our calculated RSI value
+                            timePoint: rsiData[0].time    // Use our time
+                        };
+                    }
+                    return originalFirstValue();
+                };
+                
+                console.log('Testing overridden firstValue:', series.firstValue());
+                
+                // Force the price scale to recognize our data by overriding its isEmpty method
+                const originalIsEmpty = priceScale.isEmpty.bind(priceScale);
+                (priceScale as any).isEmpty = function() {
+                    // Never say we're empty if we have RSI data
+                    if (rsiData.length > 0) {
+                        return false;
+                    }
+                    return originalIsEmpty();
+                };
+                
+                console.log('Testing overridden isEmpty:', priceScale.isEmpty());
+                
+                // Override the sourcesForAutoScale to ensure our series is included
+                const originalSourcesForAutoScale = priceScale.sourcesForAutoScale.bind(priceScale);
+                (priceScale as any).sourcesForAutoScale = function() {
+                    const sources = originalSourcesForAutoScale();
+                    // Make sure our series is always included
+                    if (sources.indexOf(series) === -1) {
+                        sources.push(series);
+                    }
+                    return sources;
+                };
+                
+                // Force recalculation with our overrides
+                priceScale.updateFormatter();
+                priceScale.invalidateSourcesCache();
+                
+                // Set a proper price range for RSI (0-100)
+                try {
+                    const rsiRange = {
+                        minValue: () => Math.min(...rsiData.map(d => d.value)) - 5,
+                        maxValue: () => Math.max(...rsiData.map(d => d.value)) + 5,
+                        length: () => Math.max(...rsiData.map(d => d.value)) - Math.min(...rsiData.map(d => d.value)) + 10,
+                        isEmpty: () => false,
+                        merge: (other: any) => rsiRange,
+                        equals: (other: any) => false,
+                        clone: () => rsiRange,
+                        scaleAroundCenter: (scale: number) => {},
+                        shift: (delta: number) => {}
+                    };
+                    
+                    priceScale.setPriceRange(rsiRange as any, true);
+                    console.log('Set RSI price range based on actual data');
+                } catch (e) {
+                    console.warn('Could not set custom price range:', e);
+                }
+                
+                // Force a complete recalculation
+                pane.recalculatePriceScale(priceScale);
+                priceScale.updateAllViews();
+                
+                // Test the final state
+                console.log('Final price scale state:');
+                console.log('- isEmpty():', priceScale.isEmpty());
+                console.log('- firstValue():', series.firstValue());
+                console.log('- priceRange():', priceScale.priceRange());
+                console.log('- marks():', priceScale.marks());
+            }
+            
+        } catch (error) {
+            console.error('Failed to set RSI series data:', error);
+        }
+        
+        // Add reference lines
+        setTimeout(() => {
+            try {
+                series.createPriceLine({
+                    price: 70,
+                    color: '#787B86',
+                    lineWidth: 1 as any,
+                    lineStyle: 2 as any,
+                    lineVisible: true,
+                    axisLabelVisible: true,
+                    axisLabelColor: '#787B86',
+                    axisLabelTextColor: '#000000',
+                    title: '',
+                });
+                
+                series.createPriceLine({
+                    price: 30,
+                    color: '#787B86',
+                    lineWidth: 1 as any,
+                    lineStyle: 2 as any,
+                    lineVisible: true,
+                    axisLabelVisible: true,
+                    axisLabelColor: '#787B86',
+                    axisLabelTextColor: '#000000',
+                    title: '',
+                });
+                console.log('RSI reference lines added');
+            } catch (e) {
+                console.warn('Could not add RSI reference lines:', e);
+            }
         }, 100);
     } else {
         console.error('No RSI series data to set!');

@@ -1393,22 +1393,47 @@ public addRSIIndicator(): string {
         const mainSeries = this._serieses[0];
         const priceData = IndicatorManager.seriesToPriceData(mainSeries);
         
-        // Create new pane first
+        console.log('=== RSI CREATION DEBUG ===');
+        console.log('Main series data points:', priceData.length);
+        
+        // CRITICAL: Create new pane and IMMEDIATELY set proper dimensions
         const newPane = this._getOrCreatePane(this._panes.length);
+        
+        // CRITICAL: Set pane dimensions BEFORE adding any data
+        const mainPaneHeight = this._panes[0].height();
+        const indicatorHeight = Math.max(100, Math.floor(mainPaneHeight * 0.3)); // At least 100px
+        
+        console.log('Setting indicator pane height to:', indicatorHeight);
+        newPane.setHeight(indicatorHeight);
+        newPane.setWidth(this._width);
+        
+        // Set stretch factor
         const mainPaneStretchFactor = this._panes[0].stretchFactor();
         newPane.setStretchFactor(mainPaneStretchFactor * 0.3);
+        
+        // CRITICAL: Force the right price scale to have proper height
+        const rightScale = newPane.rightPriceScale();
+        rightScale.setHeight(indicatorHeight);
+        
+        console.log('Pane dimensions set:', {
+            height: newPane.height(),
+            width: newPane.width(),
+            priceScaleHeight: rightScale.height()
+        });
         
         // Use the indicator manager to add RSI properly
         const indicatorId = this._indicatorManager.addRSI(
             priceData,
             () => newPane,
             (pane: Pane, type: 'Line') => {
+                console.log('Creating RSI series on pane with height:', pane.height());
+                
                 // Create complete line series options by merging with defaults
                 const defaultLineOptions = {
                     ...seriesOptionsDefaults,
                     lineStyle: 0,
                     lineType: 0,
-                    lineWidth: 2 as 1 | 2 | 3 | 4, // Cast to LineWidth type
+                    lineWidth: 2 as 1 | 2 | 3 | 4,
                     lineVisible: true,
                     pointMarkersVisible: false,
                     crosshairMarkerVisible: true,
@@ -1433,35 +1458,48 @@ public addRSIIndicator(): string {
                     },
                 };
                 
-                // Import the line series definition
                 const LineSeries = this._findLineSeriesDefinition();
                 const createPaneView = LineSeries.createPaneView;
                 
                 const rsiSeries = new Series(this, type, rsiOptions as any, createPaneView) as any;
                 
-                // Add the series to the pane BEFORE setting data
+                // CRITICAL: Add the series to the pane BEFORE setting data
                 this._addSeriesToPane(rsiSeries, pane);
                 this._serieses.push(rsiSeries);
                 
-                // Force the right price scale to be visible and properly configured
-                const rightScale = pane.rightPriceScale();
-                rightScale.setMode({ autoScale: true });
+                console.log('RSI series added to pane. Pane data sources:', pane.dataSources().length);
                 
                 return rsiSeries;
             }
         );
         
-        // Force recreation of price axis widgets by firing options changed
-        this._priceScalesOptionsChanged.fire();
+        // CRITICAL: After everything is set up, force a complete recalculation
+        console.log('Forcing complete recalculation...');
         
-        // Force multiple updates to ensure everything is redrawn
-        this.fullUpdate();
+        // Recalculate all panes to ensure proper layout
         this.recalculateAllPanes();
         
-        // Force the pane to recalculate its price scale
-        newPane.recalculatePriceScale(newPane.rightPriceScale());
+        // Force the new pane to recalculate its price scale
+        newPane.recalculatePriceScale(rightScale);
         
-        this.fullUpdate(); // Second update after recalculation
+        // CRITICAL: Set the model width to trigger proper sizing
+        this.setWidth(this._width);
+        
+        // Fire price scales options changed to force recreation of price axis widgets
+        this._priceScalesOptionsChanged.fire();
+        
+        // Force multiple updates to ensure everything is rendered
+        this.fullUpdate();
+        
+        console.log('Final pane state:', {
+            paneHeight: newPane.height(),
+            paneWidth: newPane.width(),
+            rightScaleHeight: rightScale.height(),
+            rightScaleDataSources: rightScale.dataSources().length,
+            priceRange: rightScale.priceRange()
+        });
+        
+        console.log('=== RSI CREATION COMPLETE ===');
         
         return indicatorId;
     } catch (e) {
@@ -1631,43 +1669,85 @@ private _findLineSeriesDefinition(): any {
 
     console.log('Creating new pane at index:', index);
     
+    // CRITICAL: Create a completely independent pane with its own price scales
     const pane = new Pane(this._timeScale, this);
     this._panes.push(pane);
 
-    // If this is not the main pane (index > 0), configure it specifically for indicators
+    // If this is not the main pane (index > 0), configure it as an isolated indicator pane
     if (index > 0) {
-        console.log('Configuring indicator pane with visible price scales');
+        console.log('Configuring isolated indicator pane with independent price scales');
         
-        // Force the right price scale to be visible and properly configured
+        // CRITICAL: Force the pane to have its own independent price scales
+        // This ensures the pane is completely isolated from the main chart
         pane.applyScaleOptions({
             rightPriceScale: {
-                visible: true,
-                autoScale: true,
+                visible: true,           // Force visible
+                autoScale: true,         // Enable auto-scaling for this pane's data
                 scaleMargins: {
                     top: 0.1,
                     bottom: 0.1,
                 },
-                borderVisible: true,
-                ticksVisible: true,
+                borderVisible: true,     // Show border
+                ticksVisible: true,      // Show tick marks
+                alignLabels: true,       // Align labels properly
+                entireTextOnly: false,   // Allow partial text
+                minimumWidth: 60,        // Ensure minimum width for labels
             },
             leftPriceScale: {
-                visible: false,
+                visible: false,          // Hide left scale for indicator panes
             }
         });
         
-        // Ensure the price scale is marked as having data sources
+        // CRITICAL: Ensure the right price scale is properly initialized
         const rightScale = pane.rightPriceScale();
+        
+        // Force the price scale to be marked as having valid data
         rightScale.invalidateSourcesCache();
         rightScale.updateFormatter();
+        
+        // Set a default price range to ensure the scale is not empty
+        // This is critical for RSI which should show 0-100 range
+        try {
+            const defaultRange = {
+                minValue: () => 0,
+                maxValue: () => 100,
+                length: () => 100,
+                isEmpty: () => false,
+                merge: (other: any) => defaultRange,
+                equals: (other: any) => false,
+                clone: () => defaultRange,
+                scaleAroundCenter: (scale: number) => {},
+                shift: (delta: number) => {}
+            };
+            
+            rightScale.setPriceRange(defaultRange as any, true);
+            console.log('Set default 0-100 range for indicator pane');
+        } catch (e) {
+            console.warn('Could not set default range:', e);
+        }
+        
+        // CRITICAL: Force the pane to recalculate everything
+        pane.recalculatePriceScale(rightScale);
+        pane.updateAllSources();
+        
+        console.log('Indicator pane configured with:', {
+            rightScaleVisible: rightScale.options().visible,
+            rightScaleDataSources: rightScale.dataSources().length,
+            paneHeight: pane.height(),
+            paneWidth: pane.width()
+        });
     }
 
-    // Always do autoscaling on creation
+    // CRITICAL: Force a full invalidation to ensure the new pane is properly rendered
     const mask = InvalidateMask.full();
     mask.invalidatePane(index, {
-        level: InvalidationLevel.None,
+        level: InvalidationLevel.Full,
         autoScale: true,
     });
     this._invalidate(mask);
+    
+    // CRITICAL: Fire price scales options changed to force recreation of price axis widgets
+    this._priceScalesOptionsChanged.fire();
     
     return pane;
 }

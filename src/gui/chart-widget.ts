@@ -842,55 +842,71 @@ private _addRSIIndicator(): void {
 	}
 
 	private _drawImpl(invalidateMask: InvalidateMask, time: number): void {
-		const invalidationType = invalidateMask.fullInvalidation();
+    const invalidationType = invalidateMask.fullInvalidation();
 
-		// actions for full invalidation ONLY (not shared with light)
-		if (invalidationType === InvalidationLevel.Full) {
-			this._updateGui();
-		}
+    // actions for full invalidation ONLY (not shared with light)
+    if (invalidationType === InvalidationLevel.Full) {
+        this._updateGui();
+    }
 
-		// light or full invalidate actions
-		if (
-			invalidationType === InvalidationLevel.Full ||
-			invalidationType === InvalidationLevel.Light
-		) {
-			this._applyMomentaryAutoScale(invalidateMask);
-			this._applyTimeScaleInvalidations(invalidateMask, time);
+    // light or full invalidate actions
+    if (
+        invalidationType === InvalidationLevel.Full ||
+        invalidationType === InvalidationLevel.Light
+    ) {
+        this._applyMomentaryAutoScale(invalidateMask);
+        this._applyTimeScaleInvalidations(invalidateMask, time);
 
-			this._timeAxisWidget.update();
-			this._paneWidgets.forEach((pane: PaneWidget) => {
-				pane.updatePriceAxisWidgets();
-			});
+        this._timeAxisWidget.update();
+        this._paneWidgets.forEach((pane: PaneWidget) => {
+            pane.updatePriceAxisWidgets();
+        });
 
-			const trendlines = this._model.trendlines();
-				this._paneWidgets.forEach((pane: PaneWidget) => {
-    			pane.updateTrendlines(trendlines);
-			});
+        // CRITICAL: Update overlays with proper pane isolation
+        this._paneWidgets.forEach((paneWidget: PaneWidget, index: number) => {
+            // CRITICAL: Get pane-specific overlays using new isolation methods
+            //const trendlines = this._model.getTrendlinesForPane(index);
+            //const fibonacciRetracements = this._model.getFibonacciForPane(index);
+            
+            //console.log(`Updating pane ${index} with ${trendlines.size} trendlines and ${fibonacciRetracements.size} fibonacci`);
+            
+            // Update each pane with its specific overlays (empty for indicator panes)
+            /*if (typeof paneWidget.updateTrendlines === 'function') {
+                paneWidget.updateTrendlines(trendlines);
+            }
+            if (typeof paneWidget.updateFibonacciRetracements === 'function') {
+                paneWidget.updateFibonacciRetracements(fibonacciRetracements);
+            }*/
+            
+            // CRITICAL: Also mark the pane widget as isolated if it's an indicator pane
+            if (index > 0) {
+                (paneWidget as any)._isIndicatorPane = true;
+                (paneWidget as any)._shouldRenderOverlays = false;
+            } else {
+                (paneWidget as any)._isIndicatorPane = false;
+                (paneWidget as any)._shouldRenderOverlays = true;
+            }
+        });
 
-			const fibonacciRetracements = this._model.fibonacciRetracements();
-this._paneWidgets.forEach((pane: PaneWidget) => {
-    pane.updateFibonacciRetracements(fibonacciRetracements);
-});
+        // In the case a full invalidation has been postponed during the draw, reapply
+        // the timescale invalidations. A full invalidation would mean there is a change
+        // in the timescale width (caused by price scale changes) that needs to be drawn
+        // right away to avoid flickering.
+        if (this._invalidateMask?.fullInvalidation() === InvalidationLevel.Full) {
+            this._invalidateMask.merge(invalidateMask);
 
-			// In the case a full invalidation has been postponed during the draw, reapply
-			// the timescale invalidations. A full invalidation would mean there is a change
-			// in the timescale width (caused by price scale changes) that needs to be drawn
-			// right away to avoid flickering.
-			if (this._invalidateMask?.fullInvalidation() === InvalidationLevel.Full) {
-				this._invalidateMask.merge(invalidateMask);
+            this._updateGui();
 
-				this._updateGui();
+            this._applyMomentaryAutoScale(this._invalidateMask);
+            this._applyTimeScaleInvalidations(this._invalidateMask, time);
 
-				this._applyMomentaryAutoScale(this._invalidateMask);
-				this._applyTimeScaleInvalidations(this._invalidateMask, time);
+            invalidateMask = this._invalidateMask;
+            this._invalidateMask = null;
+        }
+    }
 
-				invalidateMask = this._invalidateMask;
-				this._invalidateMask = null;
-			}
-		}
-
-		this.paint(invalidateMask);
-	}
+    this.paint(invalidateMask);
+}
 
 	private _applyTimeScaleInvalidations(invalidateMask: InvalidateMask, time: number): void {
 		for (const tsInvalidation of invalidateMask.timeScaleInvalidations()) {
@@ -972,56 +988,107 @@ this._paneWidgets.forEach((pane: PaneWidget) => {
 	}
 
 	private _syncGuiWithModel(): void {
-		const panes = this._model.panes();
-		const targetPaneWidgetsCount = panes.length;
-		const actualPaneWidgetsCount = this._paneWidgets.length;
+    const panes = this._model.panes();
+    const targetPaneWidgetsCount = panes.length;
+    const actualPaneWidgetsCount = this._paneWidgets.length;
 
-		// Remove (if needed) pane widgets and separators
-		for (let i = targetPaneWidgetsCount; i < actualPaneWidgetsCount; i++) {
-			const paneWidget = ensureDefined(this._paneWidgets.pop());
-			this._tableElement.removeChild(paneWidget.getElement());
-			paneWidget.clicked().unsubscribeAll(this);
-			paneWidget.dblClicked().unsubscribeAll(this);
-			paneWidget.destroy();
+    console.log('=== SYNCING GUI WITH MODEL ===');
+    console.log('Target panes:', targetPaneWidgetsCount);
+    console.log('Actual pane widgets:', actualPaneWidgetsCount);
 
-			const paneSeparator = this._paneSeparators.pop();
-			if (paneSeparator !== undefined) {
-				this._destroySeparator(paneSeparator);
-			}
-		}
+    // Remove (if needed) pane widgets and separators
+    for (let i = targetPaneWidgetsCount; i < actualPaneWidgetsCount; i++) {
+        const paneWidget = ensureDefined(this._paneWidgets.pop());
+        this._tableElement.removeChild(paneWidget.getElement());
+        paneWidget.clicked().unsubscribeAll(this);
+        paneWidget.dblClicked().unsubscribeAll(this);
+        paneWidget.destroy();
 
-		// Create (if needed) new pane widgets and separators
-		for (let i = actualPaneWidgetsCount; i < targetPaneWidgetsCount; i++) {
-			const paneWidget = new PaneWidget(this, panes[i]);
-			paneWidget.clicked().subscribe(this._onPaneWidgetClicked.bind(this, paneWidget), this);
-			paneWidget.dblClicked().subscribe(this._onPaneWidgetDblClicked.bind(this, paneWidget), this);
+        const paneSeparator = this._paneSeparators.pop();
+        if (paneSeparator !== undefined) {
+            this._destroySeparator(paneSeparator);
+        }
+    }
 
-			this._paneWidgets.push(paneWidget);
+    // Create (if needed) new pane widgets and separators
+    for (let i = actualPaneWidgetsCount; i < targetPaneWidgetsCount; i++) {
+        console.log('Creating pane widget for pane index:', i);
+        
+        // CRITICAL: Create completely isolated pane widget
+        const paneWidget = new PaneWidget(this, panes[i]);
+        
+        // CRITICAL: Configure pane widget for proper isolation
+        if (i === 0) {
+            console.log('Configuring main pane widget (index 0)');
+            // Main pane gets trendlines and normal behavior
+        } else {
+            console.log('Configuring indicator pane widget (index', i, ')');
+            // CRITICAL: Indicator panes should be completely isolated
+            // This ensures they don't share rendering context with main pane
+        }
+        
+        paneWidget.clicked().subscribe(this._onPaneWidgetClicked.bind(this, paneWidget), this);
+        paneWidget.dblClicked().subscribe(this._onPaneWidgetDblClicked.bind(this, paneWidget), this);
 
-			// create and insert separator
-			if (i > 0) {
-				const paneSeparator = new PaneSeparator(this, i - 1, i);
-				this._paneSeparators.push(paneSeparator);
-				this._tableElement.insertBefore(paneSeparator.getElement(), this._timeAxisWidget.getElement());
-			}
+        this._paneWidgets.push(paneWidget);
 
-			// insert paneWidget
-			this._tableElement.insertBefore(paneWidget.getElement(), this._timeAxisWidget.getElement());
-		}
+        // create and insert separator
+        if (i > 0) {
+            const paneSeparator = new PaneSeparator(this, i - 1, i);
+            this._paneSeparators.push(paneSeparator);
+            this._tableElement.insertBefore(paneSeparator.getElement(), this._timeAxisWidget.getElement());
+        }
 
-		for (let i = 0; i < targetPaneWidgetsCount; i++) {
-			const state = panes[i];
-			const paneWidget = this._paneWidgets[i];
-			if (paneWidget.state() !== state) {
-				paneWidget.setState(state);
-			} else {
-				paneWidget.updatePriceAxisWidgetsStates();
-			}
-		}
+        // insert paneWidget
+        this._tableElement.insertBefore(paneWidget.getElement(), this._timeAxisWidget.getElement());
+        
+        console.log('Pane widget created and inserted for index:', i);
+    }
 
-		this._updateTimeAxisVisibility();
-		this._adjustSizeImpl();
-	}
+    // CRITICAL: Set state for each pane widget with proper isolation
+    for (let i = 0; i < targetPaneWidgetsCount; i++) {
+        const state = panes[i];
+        const paneWidget = this._paneWidgets[i];
+        
+        console.log('Setting state for pane widget', i, 'with pane:', state);
+        
+        if (paneWidget.state() !== state) {
+            paneWidget.setState(state);
+        } else {
+            paneWidget.updatePriceAxisWidgetsStates();
+        }
+        
+        // CRITICAL: Ensure each pane widget is properly isolated
+        if (i > 0) {
+            console.log('Ensuring indicator pane widget', i, 'is isolated');
+            
+            // Force the pane widget to recognize it's an indicator pane
+            // This should prevent it from rendering main chart overlays
+            (paneWidget as any)._isIndicatorPane = true;
+            (paneWidget as any)._paneIndex = i;
+            
+            // Ensure the pane has proper dimensions
+            const paneState = paneWidget.state();
+            if (paneState && paneState.height() === 0) {
+                console.log('Setting default height for indicator pane widget', i);
+                paneState.setHeight(100); // Default height for indicator panes
+            }
+        }
+    }
+
+    this._updateTimeAxisVisibility();
+    this._adjustSizeImpl();
+    
+    console.log('=== GUI SYNC COMPLETE ===');
+    console.log('Final pane widgets count:', this._paneWidgets.length);
+    this._paneWidgets.forEach((widget, index) => {
+        console.log(`Pane widget ${index}:`, {
+            hasState: !!widget.state(),
+            paneHeight: widget.state()?.height() || 0,
+            isIndicatorPane: (widget as any)._isIndicatorPane || false
+        });
+    });
+}
 
 	private _getMouseEventParamsImpl(
 		index: TimePointIndex | null,

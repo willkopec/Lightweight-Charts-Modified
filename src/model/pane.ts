@@ -508,9 +508,7 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
         console.log(`Data source ${index}:`, ds);
         console.log(`  - Constructor:`, ds.constructor.name);
         console.log(`  - Has title method:`, typeof (ds as any).title === 'function');
-        if (typeof (ds as any).title === 'function') {
-            console.log(`  - Title:`, (ds as any).title());
-        }
+        // FIXED: Remove the options() call that was causing the error
         console.log(`  - Price scale:`, ds.priceScale()?.id());
     });
     
@@ -524,11 +522,18 @@ export class Pane implements IDestroyable, IPrimitiveHitTestSource {
                              return title === 'RSI(14)';
                          }
                          
-                         // Method 2: Check if it's a Series with RSI options
+                         // Method 2: Check if it's a Series with RSI in the title
                          if (ds.constructor.name === 'Series') {
-                             const options = (ds as any).options();
-                             console.log('Series options:', options);
-                             return options && options.title === 'RSI(14)';
+                             // Try to access series options safely
+                             try {
+                                 const series = ds as any;
+                                 if (series._options && series._options.title) {
+                                     console.log('Series title:', series._options.title);
+                                     return series._options.title === 'RSI(14)';
+                                 }
+                             } catch (e) {
+                                 console.log('Could not access series options');
+                             }
                          }
                          
                          return false;
