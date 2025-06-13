@@ -638,44 +638,44 @@ export class PriceScale {
     
     // Debug for any right price scale with data sources
     if (this._id === 'right' && this._dataSources.length > 0) {
-        console.log('=== PRICE SCALE MARKS DEBUG ===');
-        console.log('Price scale ID:', this._id);
-        console.log('First value is null:', firstValueIsNull);
-        console.log('Price scale height:', this._height);
-        console.log('Price scale internal height:', this.internalHeight());
-        console.log('Price range:', this._priceRange);
-        console.log('Data sources count:', this._dataSources.length);
-        console.log('Is empty:', this.isEmpty());
+        //console.log('=== PRICE SCALE MARKS DEBUG ===');
+        //console.log('Price scale ID:', this._id);
+        //console.log('First value is null:', firstValueIsNull);
+        //console.log('Price scale height:', this._height);
+        //console.log('Price scale internal height:', this.internalHeight());
+        //console.log('Price range:', this._priceRange);
+        //console.log('Data sources count:', this._dataSources.length);
+        //console.log('Is empty:', this.isEmpty());
         
         const firstValue = this._dataSources[0].firstValue();
-        console.log('First data source first value:', firstValue);
+        //console.log('First data source first value:', firstValue);
         if (firstValue) {
-            console.log('First value breakdown - value:', firstValue.value, 'timePoint:', firstValue.timePoint);
+            //console.log('First value breakdown - value:', firstValue.value, 'timePoint:', firstValue.timePoint);
         }
     }
 
     if (this._marksCache !== null && (firstValueIsNull || this._marksCache.firstValueIsNull === firstValueIsNull)) {
         if (this._id === 'right' && this._dataSources.length > 0) {
-            console.log('Using cached marks:', this._marksCache.marks.length);
-            console.log('=== END MARKS DEBUG ===');
+            //console.log('Using cached marks:', this._marksCache.marks.length);
+            //console.log('=== END MARKS DEBUG ===');
         }
         return this._marksCache.marks;
     }
 
     if (this._id === 'right' && this._dataSources.length > 0) {
-        console.log('Rebuilding tick marks...');
+        //console.log('Rebuilding tick marks...');
     }
     
     this._markBuilder.rebuildTickMarks();
     const marks = this._markBuilder.marks();
     
     if (this._id === 'right' && this._dataSources.length > 0) {
-        console.log('Generated marks:', marks.length);
+        //console.log('Generated marks:', marks.length);
         if (marks.length > 0) {
-            console.log('First mark:', marks[0]);
-            console.log('Last mark:', marks[marks.length - 1]);
+            //console.log('First mark:', marks[0]);
+            //console.log('Last mark:', marks[marks.length - 1]);
         }
-        console.log('=== END MARKS DEBUG ===');
+        //console.log('=== END MARKS DEBUG ===');
     }
     
     this._marksCache = { marks, firstValueIsNull };

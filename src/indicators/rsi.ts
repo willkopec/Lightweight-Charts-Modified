@@ -1,6 +1,11 @@
 export interface RSIData {
-    time: number;
-    value: number;
+    time: number;    // Simple timestamp
+    value: number;   // Simple RSI value
+}
+
+export interface PriceData {
+    time: number;    // Simple timestamp  
+    close: number;   // Simple close price
 }
 
 export interface RSIOptions {
@@ -46,7 +51,10 @@ export class RSIIndicator {
         return this._data;
     }
 
-    public calculate(priceData: readonly PriceData[]): RSIData[] {
+    // First, fix the RSI calculation to use the correct property names:
+// src/indicators/rsi.ts - Update the calculate method:
+
+public calculate(priceData: readonly PriceData[]): RSIData[] {
     if (priceData.length < this._options.period + 1) {
         this._data = [];
         return this._data;
@@ -81,10 +89,10 @@ export class RSIIndicator {
     let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
     let rsi = 100 - (100 / (1 + rs));
 
-    // CRITICAL FIX: Use the exact property names that lightweight-charts expects
+    // CRITICAL FIX: Use simple properties that lightweight-charts expects
     rsiValues.push({
-        time: priceData[period].time,  // Use 'time', not '_internal_time'
-        value: rsi                     // Use 'value', not '_internal_value'
+        time: priceData[period].time,  // Use simple 'time' property
+        value: rsi                     // Use simple 'value' property
     });
 
     // Calculate subsequent RSI values using smoothed averages
@@ -102,15 +110,15 @@ export class RSIIndicator {
         rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
         rsi = 100 - (100 / (1 + rs));
 
-        // CRITICAL FIX: Use the exact property names that lightweight-charts expects
+        // CRITICAL FIX: Use simple properties
         rsiValues.push({
-            time: priceData[i + 1].time,  // Use 'time', not '_internal_time'
-            value: rsi                    // Use 'value', not '_internal_value'
+            time: priceData[i + 1].time,  // Use simple 'time' property
+            value: rsi                    // Use simple 'value' property
         });
     }
 
     this._data = rsiValues;
-    console.log('RSI calculation complete. First few values with correct format:');
+    console.log('RSI calculation complete. First few values with CORRECTED format:');
     rsiValues.slice(0, 3).forEach((val, idx) => {
         console.log(`RSI[${idx}]:`, val);
         console.log(`  - time type: ${typeof val.time}, value type: ${typeof val.value}`);

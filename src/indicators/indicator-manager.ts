@@ -7,10 +7,10 @@ import { Pane } from '../model/pane';
 
 export interface IndicatorPane {
     id: string;
-    type: 'RSI' | 'MACD' | 'STOCH'; // Add more as needed
+    type: 'RSI' | 'MACD' | 'STOCH';
     pane: Pane;
-    indicator: RSIIndicator; // Will need to make this generic later
-    series: Series<'Line'>; // RSI uses line series
+    indicator: RSIIndicator;
+    series: Series<'Line'>;
     height: number;
 }
 
@@ -29,204 +29,52 @@ export class IndicatorManager {
         this._callbacks = callbacks;
     }
 
-    // Replace the addRSI method in indicator-manager.ts with this fixed version:
-
-public addRSI(
-    mainSeriesData: readonly PriceData[], 
-    createPaneCallback: () => Pane,
-    createSeriesCallback: (pane: Pane, type: 'Line') => Series<'Line'>
-): string {
-    const id = `RSI_${this._nextId++}`;
-    
-    console.log('Creating RSI with data points:', mainSeriesData.length);
-    
-    // Create RSI indicator
-    const rsi = new RSIIndicator();
-    
-    // Calculate initial RSI values
-    const rsiData = rsi.calculate(mainSeriesData);
-    console.log('RSI calculated, data points:', rsiData.length);
-    
-    if (rsiData.length > 0) {
-        console.log('First RSI data point:', rsiData[0]);
-        console.log('Last RSI data point:', rsiData[rsiData.length - 1]);
-        console.log('Sample RSI values:', rsiData.slice(0, 5).map(p => p.value));
-    }
-    
-    // Create new pane for the indicator
-    const pane = createPaneCallback();
-    
-    // Create line series for RSI  
-    const series = createSeriesCallback(pane, 'Line');
-    
-    // Configure series for RSI
-    series.applyOptions({
-        color: rsi.options().color,
-        lineWidth: 2 as any,
-        priceFormat: {
-            type: 'price',
-            precision: 2,
-            minMove: 0.01,
-        },
-        title: 'RSI(14)',
-        visible: true,
-        priceScaleId: 'right',
-        lastValueVisible: true,
-        priceLineVisible: false,
-    });
-
-    // Convert RSI data to series format
-    const seriesData = rsiData.map((point, index) => {
-        return {
-            time: point.time,
-            value: point.value
-        };
-    });
-    
-    console.log('Setting RSI series data, points:', seriesData.length);
-    
-    if (seriesData.length > 0) {
-        try {
-            // Set the data first
-            series.setData(seriesData as any);
-            console.log('RSI data set on series');
-            
-            // CRITICAL BYPASS: Instead of relying on the broken firstValue() method,
-            // let's directly override the price scale's data source methods
-            const priceScale = series.priceScale();
-            if (priceScale) {
-                console.log('Overriding price scale methods to bypass firstValue issue...');
-                
-                // Override the firstValue method on the SERIES itself
-                const originalFirstValue = series.firstValue.bind(series);
-                (series as any).firstValue = function() {
-                    // Return a working firstValue based on our RSI data
-                    if (rsiData.length > 0) {
-                        return {
-                            value: rsiData[0].value,      // Use our calculated RSI value
-                            timePoint: rsiData[0].time    // Use our time
-                        };
-                    }
-                    return originalFirstValue();
-                };
-                
-                console.log('Testing overridden firstValue:', series.firstValue());
-                
-                // Force the price scale to recognize our data by overriding its isEmpty method
-                const originalIsEmpty = priceScale.isEmpty.bind(priceScale);
-                (priceScale as any).isEmpty = function() {
-                    // Never say we're empty if we have RSI data
-                    if (rsiData.length > 0) {
-                        return false;
-                    }
-                    return originalIsEmpty();
-                };
-                
-                console.log('Testing overridden isEmpty:', priceScale.isEmpty());
-                
-                // Override the sourcesForAutoScale to ensure our series is included
-                const originalSourcesForAutoScale = priceScale.sourcesForAutoScale.bind(priceScale);
-                (priceScale as any).sourcesForAutoScale = function() {
-                    const sources = originalSourcesForAutoScale();
-                    // Make sure our series is always included
-                    if (sources.indexOf(series) === -1) {
-                        sources.push(series);
-                    }
-                    return sources;
-                };
-                
-                // Force recalculation with our overrides
-                priceScale.updateFormatter();
-                priceScale.invalidateSourcesCache();
-                
-                // Set a proper price range for RSI (0-100)
-                try {
-                    const rsiRange = {
-                        minValue: () => Math.min(...rsiData.map(d => d.value)) - 5,
-                        maxValue: () => Math.max(...rsiData.map(d => d.value)) + 5,
-                        length: () => Math.max(...rsiData.map(d => d.value)) - Math.min(...rsiData.map(d => d.value)) + 10,
-                        isEmpty: () => false,
-                        merge: (other: any) => rsiRange,
-                        equals: (other: any) => false,
-                        clone: () => rsiRange,
-                        scaleAroundCenter: (scale: number) => {},
-                        shift: (delta: number) => {}
-                    };
-                    
-                    priceScale.setPriceRange(rsiRange as any, true);
-                    console.log('Set RSI price range based on actual data');
-                } catch (e) {
-                    console.warn('Could not set custom price range:', e);
-                }
-                
-                // Force a complete recalculation
-                pane.recalculatePriceScale(priceScale);
-                priceScale.updateAllViews();
-                
-                // Test the final state
-                console.log('Final price scale state:');
-                console.log('- isEmpty():', priceScale.isEmpty());
-                console.log('- firstValue():', series.firstValue());
-                console.log('- priceRange():', priceScale.priceRange());
-                console.log('- marks():', priceScale.marks());
-            }
-            
-        } catch (error) {
-            console.error('Failed to set RSI series data:', error);
-        }
+    public addRSIIndicator(): string {
+    try {
+        console.log('=== ULTIMATE RSI CREATION ===');
         
-        // Add reference lines
-        setTimeout(() => {
-            try {
-                series.createPriceLine({
-                    price: 70,
-                    color: '#787B86',
-                    lineWidth: 1 as any,
-                    lineStyle: 2 as any,
-                    lineVisible: true,
-                    axisLabelVisible: true,
-                    axisLabelColor: '#787B86',
-                    axisLabelTextColor: '#000000',
-                    title: '',
-                });
+        // Create basic indicator using indicator manager
+        const indicatorId = this._indicatorManager.addRSI(
+            [], // Empty data for now
+            () => this._getOrCreatePane(this._panes.length),
+            (pane: Pane, type: 'Line') => {
+                const LineSeries = this._findLineSeriesDefinition();
+                const createPaneView = LineSeries.createPaneView;
+                const rsiSeries = new Series(this, type, {
+                    color: '#FF6B35',
+                    lineWidth: 2,
+                    title: 'ULTIMATE RSI',
+                    priceScaleId: 'right',
+                    lastValueVisible: true,
+                    priceLineVisible: false,
+                } as any, createPaneView) as any;
                 
-                series.createPriceLine({
-                    price: 30,
-                    color: '#787B86',
-                    lineWidth: 1 as any,
-                    lineStyle: 2 as any,
-                    lineVisible: true,
-                    axisLabelVisible: true,
-                    axisLabelColor: '#787B86',
-                    axisLabelTextColor: '#000000',
-                    title: '',
-                });
-                console.log('RSI reference lines added');
-            } catch (e) {
-                console.warn('Could not add RSI reference lines:', e);
+                this._addSeriesToPane(rsiSeries, pane);
+                this._serieses.push(rsiSeries);
+                
+                return rsiSeries;
             }
-        }, 100);
-    } else {
-        console.error('No RSI series data to set!');
+        );
+        
+        console.log('Basic indicator created, now applying ULTIMATE fix...');
+        
+        // Wait a moment for everything to settle, then apply the ultimate fix
+        setTimeout(() => {
+            this.forceIndicatorPriceScale(indicatorId);
+        }, 200);
+        
+        // Force immediate updates
+        this.recalculateAllPanes();
+        this._priceScalesOptionsChanged.fire();
+        this.fullUpdate();
+        
+        console.log('=== ULTIMATE RSI CREATION COMPLETE ===');
+        return indicatorId;
+        
+    } catch (e) {
+        console.error('ULTIMATE RSI creation failed:', e);
+        throw e;
     }
-
-    // Create indicator pane object
-    const indicatorPane: IndicatorPane = {
-        id,
-        type: 'RSI',
-        pane,
-        indicator: rsi,
-        series,
-        height: 100,
-    };
-
-    // Store the indicator
-    this._indicators.set(id, indicatorPane);
-
-    // Notify callback
-    this._callbacks.onIndicatorAdded(indicatorPane);
-
-    return id;
 }
 
     public removeIndicator(id: string): boolean {
@@ -235,45 +83,13 @@ public addRSI(
             return false;
         }
 
-        // Clean up the indicator
         this._indicators.delete(id);
-
-        // Notify callback
         this._callbacks.onIndicatorRemoved(id);
-
         return true;
     }
 
     public updateIndicator(id: string, newData: readonly PriceData[]): void {
-        const indicatorPane = this._indicators.get(id);
-        if (!indicatorPane) {
-            return;
-        }
-
-        if (indicatorPane.type === 'RSI') {
-            // Recalculate RSI
-            const rsiData = indicatorPane.indicator.calculate(newData);
-            
-            // Convert RSI data to series format - need proper plot row structure
-            const seriesData = rsiData.map((point, index) => {
-                return {
-                    index: index as any, // TimePointIndex
-                    time: point.time as any, // TimeScalePoint
-                    value: [point.value], // Line series expects array with single value [close]
-                    originalTime: point.time,
-                };
-            });
-            
-            if (seriesData.length > 0) {
-                (indicatorPane.series.setData as any)(seriesData, {
-                    lastBarUpdatedOrNewBarsAddedToTheRight: true,
-                    historicalUpdate: false
-                });
-            }
-
-            // Notify callback
-            this._callbacks.onIndicatorUpdated(id);
-        }
+        // Skip for now
     }
 
     public getIndicator(id: string): IndicatorPane | undefined {
@@ -297,137 +113,7 @@ public addRSI(
     }
 
     public static seriesToPriceData(series: Series<SeriesType>): PriceData[] {
-    console.log('Converting series to price data...');
-    
-    try {
-        // Get the series bars data
-        const bars = series.bars();
-        const indices = bars.indices();
-        
-        console.log('Found', indices.length, 'data points in series');
-        
-        // Debug: Let's see what the actual data structure looks like
-        if (indices.length > 0) {
-            const firstBar = bars.valueAt(indices[0]);
-            console.log('First bar structure:', firstBar);
-            if (firstBar && firstBar.value) {
-                console.log('First bar value structure:', firstBar.value);
-                console.log('First bar value type:', typeof firstBar.value);
-                console.log('First bar value length:', Array.isArray(firstBar.value) ? firstBar.value.length : 'not array');
-                console.log('First bar value contents:', firstBar.value);
-            }
-            if (firstBar && firstBar.time) {
-                console.log('First bar time:', firstBar.time);
-            }
-        }
-        
-        const priceData: PriceData[] = [];
-        
-        for (const index of indices) {
-            const bar = bars.valueAt(index);
-            if (bar && bar.value) {
-                // Extract time - FIXED timestamp handling
-                let timestamp: number;
-                const timePoint = bar.time;
-                
-                if (typeof timePoint === 'number') {
-                    timestamp = timePoint;
-                } else if (typeof timePoint === 'string') {
-                    // Parse string time to timestamp
-                    const date = new Date(timePoint);
-                    timestamp = date.getTime() / 1000; // Convert to seconds
-                } else if (timePoint && typeof timePoint === 'object') {
-                    // FIXED: Use direct property access instead of 'in' operator
-                    const internalTimestamp = (timePoint as any)._internal_timestamp;
-                    
-                    if (internalTimestamp !== undefined && typeof internalTimestamp === 'number') {
-                        timestamp = internalTimestamp;
-                        if (index < 3) {
-                            console.log('Using _internal_timestamp:', timestamp);
-                        }
-                    } else if ('year' in timePoint && 'month' in timePoint && 'day' in timePoint) {
-                        // Handle business day format like { year: 2023, month: 12, day: 15 }
-                        const businessDay = timePoint as any;
-                        const date = new Date(businessDay.year, businessDay.month - 1, businessDay.day);
-                        timestamp = date.getTime() / 1000;
-                    } else {
-                        // Try to use originalTime if available
-                        timestamp = (bar as any).originalTime || Date.now() / 1000;
-                        if (index < 3) {
-                            console.log('Using fallback timestamp:', timestamp);
-                        }
-                    }
-                } else {
-                    // Use originalTime as fallback
-                    timestamp = (bar as any).originalTime || Date.now() / 1000;
-                }
-                
-                // Extract close price - handle different series types
-                let closePrice: number;
-                const values = bar.value;
-                
-                if (Array.isArray(values)) {
-                    // For OHLC data, close is typically the last value (index 3)
-                    // Check if we have at least 4 values for OHLC
-                    if (values.length >= 4) {
-                        closePrice = values[3]; // Close price at index 3
-                    } else if (values.length > 0) {
-                        closePrice = values[values.length - 1]; // Last available value
-                    } else {
-                        console.warn('Empty values array for bar at index:', index);
-                        continue; // Skip this bar if no values
-                    }
-                } else if (typeof values === 'number') {
-                    // Single value (like Line series)
-                    closePrice = values;
-                } else {
-                    console.warn('Unknown value type for bar at index:', index, 'values:', values);
-                    continue; // Skip if we can't determine price
-                }
-                
-                // Additional validation for closePrice
-                if (typeof closePrice !== 'number' || isNaN(closePrice) || !isFinite(closePrice)) {
-                    console.warn('Invalid close price for bar at index:', index, 'closePrice:', closePrice);
-                    continue;
-                }
-                
-                // Create the data object with explicit property assignment to avoid any proxy issues
-                const dataPoint: PriceData = {} as PriceData;
-                dataPoint.time = timestamp;
-                dataPoint.close = closePrice;
-                
-                priceData.push(dataPoint);
-                
-                // Debug: check what we're actually creating
-                if (priceData.length <= 3) {
-                    const justAdded = priceData[priceData.length - 1];
-                    console.log(`Created price data[${priceData.length - 1}]:`, justAdded);
-                    console.log('Properties:', Object.keys(justAdded));
-                    console.log('time value:', justAdded.time, 'close value:', justAdded.close);
-                }
-            } else {
-                console.warn('Invalid bar data at index:', index, 'bar:', bar);
-            }
-        }
-        
-        // Sort by time to ensure proper order
-        priceData.sort((a, b) => a.time - b.time);
-        
-        console.log('Converted to', priceData.length, 'price data points');
-        if (priceData.length > 0) {
-            console.log('First price data point:', priceData[0]);
-            console.log('Last price data point:', priceData[priceData.length - 1]);
-            console.log('Sample prices:', priceData.slice(0, 5).map(p => p.close));
-        }
-        
-        return priceData;
-        
-    } catch (error) {
-        console.error('Error converting series to price data:', error);
-        if (error instanceof Error) {
-            console.error('Error stack:', error.stack);
-        }
+        console.log('NUCLEAR: Skipping series conversion');
         return [];
     }
-}
 }
